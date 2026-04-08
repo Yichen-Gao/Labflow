@@ -318,9 +318,19 @@ def _load_recent_audit_events(
     return [], notes
 
 
-def _is_background_command(event: CommandEvent) -> bool:
-    command = event.command.strip()
-    if command in {"sleep 1", "grep socket:", "grep root", "ps -F -A -l", "trae-helper"}:
+def _is_background_command(event: CommandEvent | str) -> bool:
+    command = event.command.strip() if isinstance(event, CommandEvent) else str(event).strip()
+    if command in {
+        "sleep 1",
+        "grep socket:",
+        "grep root",
+        "ps -F -A -l",
+        "free",
+        "uptime",
+        "df",
+        "cat /proc/net/dev",
+        "trae-helper",
+    }:
         return True
     noisy_prefixes = (
         "cat /proc/",
@@ -332,10 +342,13 @@ def _is_background_command(event: CommandEvent) -> bool:
         "/bin/sh /usr/bin/which ps",
         "/bin/sh -c ps -F -A -l | grep root",
         "/bin/sh -c ls -l /proc/",
+        "bash -c export LANG=\"en_US\";export LANGUAGE=\"en_US\";export LC_ALL=\"en_US\";free;",
         "kill -0 ",
         "ls -l /proc/",
     )
     if command.startswith(noisy_prefixes):
+        return True
+    if "finalshell_separator" in command:
         return True
     if ".trae-server" in command and ("cpuUsage.sh" in command or "which ps" in command):
         return True
@@ -474,14 +487,17 @@ def load_recent_commands(
     target_uid: int,
     timezone_name: str,
     limit: int = 5,
+    prefer_audit: bool = True,
 ) -> tuple[list[CommandEvent], list[str]]:
     notes: list[str] = []
-    audit_events, audit_notes = _load_recent_audit_events(
-        target_uid=target_uid,
-        timezone_name=timezone_name,
-        limit=max(limit * 3, 10),
-    )
-    notes.extend(audit_notes)
+    audit_events: list[CommandEvent] = []
+    if prefer_audit:
+        audit_events, audit_notes = _load_recent_audit_events(
+            target_uid=target_uid,
+            timezone_name=timezone_name,
+            limit=max(limit * 3, 10),
+        )
+        notes.extend(audit_notes)
 
     history_events, history_notes, history_found, undated_history_found = _load_shell_history_events(
         login_name=login_name,

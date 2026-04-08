@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .db import Database
-from .forensics import load_command_events, load_recent_commands
+from .forensics import _is_background_command, load_command_events, load_recent_commands
 from .utils import format_bytes
 
 try:
@@ -305,6 +305,7 @@ class CursesMonitor:
                 target_uid=uid,
                 timezone_name=self.db.config.timezone,
                 limit=max(limit, 1),
+                prefer_audit=False,
             )
             self.command_cache[uid] = [
                 {
@@ -499,7 +500,8 @@ class CursesMonitor:
             detail_height = max(pane_height - 2, 8)
             detail_lines = [
                 f"姓名：{selected['display_name']}",
-                f"登录名：{selected['login_name']}   UID：{selected['uid']}   排名：{selected['rank']}",
+                f"登录名：{selected['login_name']}",
+                f"UID：{selected['uid']}   本月排名：{selected['rank']}",
                 f"目录：{selected['data_dir'] or '-'}",
                 f"本月总量：{format_bytes(int(selected['total_bytes']))}（占 {percent:.2f}%）",
                 f"接收：{format_bytes(int(selected['rx_bytes']))}",
@@ -541,7 +543,8 @@ class CursesMonitor:
             else:
                 detail_lines.append("这个月之前还没有历史记录")
 
-            for offset, line in enumerate(detail_lines[:detail_height]):
+            wrapped_detail_lines = _wrap_lines(detail_lines, right_width - 4)
+            for offset, line in enumerate(wrapped_detail_lines[:detail_height]):
                 attr = 0
                 if line.endswith("："):
                     attr = self._color("pane_title", curses.A_BOLD)
@@ -644,6 +647,11 @@ class CursesMonitor:
         sample_index = max(0, min(sample_index, len(samples) - 1))
         sample_row = samples[sample_index]
         events, notes, start, end = self._trace_for_sample(sample_row, window_minutes=20)
+        visible_events = [row for row in events if not _is_background_command(str(row.get("command") or ""))]
+        if visible_events:
+            if len(visible_events) < len(events):
+                notes = list(notes) + ["已自动隐藏一部分明显的后台探活命令"]
+            events = visible_events
         show_source = _should_show_command_source(events)
 
         lines = [
