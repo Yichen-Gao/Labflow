@@ -12,7 +12,13 @@ from labflow.config import LabflowConfig
 from labflow.db import Database
 from labflow.discovery import discover_users
 from labflow.cli import _sorted_report_rows, _write_report_csv
-from labflow.forensics import parse_audit_exec_events, parse_bash_history, parse_zsh_history
+from labflow.forensics import (
+    CommandEvent,
+    load_recent_commands,
+    parse_audit_exec_events,
+    parse_bash_history,
+    parse_zsh_history,
+)
 from labflow.interactive import build_monitor_rows, find_matching_users, sanitize_filename
 from labflow.nftables import build_rules, parse_counter_listing
 from labflow.systemd_assets import parse_default_interface
@@ -195,6 +201,32 @@ class LabflowTests(unittest.TestCase):
         parsed = parse_zsh_history(text, "Asia/Shanghai")
         self.assertEqual(1, len(parsed))
         self.assertEqual("wget https://example.com/file", parsed[0].command)
+
+    def test_load_recent_commands_prefers_timestamped_entries(self) -> None:
+        from unittest.mock import patch
+
+        events = [
+            CommandEvent(ts=datetime(2026, 4, 8, 17, 1, tzinfo=ZoneInfo("Asia/Shanghai")), source="bash_history", command="ls"),
+            CommandEvent(ts=datetime(2026, 4, 8, 17, 3, tzinfo=ZoneInfo("Asia/Shanghai")), source="bash_history", command="python train.py"),
+            CommandEvent(ts=None, source="bash_history", command="cat log.txt"),
+        ]
+        with patch("labflow.forensics._load_shell_history_events", return_value=(events, [], True, True)):
+            recent, notes = load_recent_commands("wuxi", "/datas/wuxi", "Asia/Shanghai", limit=2)
+        self.assertEqual(["python train.py", "ls"], [item.command for item in recent])
+        self.assertEqual([], notes)
+
+    def test_load_recent_commands_falls_back_to_undated_history(self) -> None:
+        from unittest.mock import patch
+
+        events = [
+            CommandEvent(ts=None, source="bash_history", command="cd /tmp"),
+            CommandEvent(ts=None, source="bash_history", command="tail -f train.log"),
+            CommandEvent(ts=None, source="bash_history", command="python eval.py"),
+        ]
+        with patch("labflow.forensics._load_shell_history_events", return_value=(events, [], True, True)):
+            recent, notes = load_recent_commands("wuxi", "/datas/wuxi", "Asia/Shanghai", limit=2)
+        self.assertEqual(["python eval.py", "tail -f train.log"], [item.command for item in recent])
+        self.assertTrue(any("无时间戳" in note for note in notes))
 
 
 if __name__ == "__main__":

@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import curses
 import re
+from datetime import datetime
 from pathlib import Path
 
 from .db import Database
+from .forensics import load_recent_commands
 from .utils import format_bytes
 
 try:
@@ -64,6 +66,28 @@ def sanitize_filename(value: str) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
     sanitized = sanitized.strip("-._")
     return sanitized or "user"
+
+
+def _command_source_label(source: str) -> str:
+    labels = {
+        "bash_history": "bash",
+        "zsh_history": "zsh",
+        "fish_history": "fish",
+        "auditd": "audit",
+    }
+    return labels.get(source, source)
+
+
+def _format_command_event_line(event: dict[str, object]) -> str:
+    timestamp = event.get("ts")
+    if isinstance(timestamp, datetime):
+        prefix = timestamp.strftime("%m-%d %H:%M")
+    elif isinstance(timestamp, str) and timestamp:
+        prefix = timestamp[5:16].replace("T", " ")
+    else:
+        prefix = "recent"
+    source = _command_source_label(str(event.get("source") or "history"))
+    return f"{prefix} [{source}] {event.get('command') or '(unknown)'}"
 
 
 def build_monitor_rows(db: Database, month: str) -> tuple[list[dict[str, object]], int]:
@@ -167,11 +191,17 @@ class CursesMonitor:
         self.scroll_offset = 0
         self.status_message = "Ready"
         self.history_cache: dict[int, list[dict[str, object]]] = {}
+        self.sample_cache: dict[int, list[dict[str, object]]] = {}
+        self.command_cache: dict[int, list[dict[str, object]]] = {}
+        self.command_notes_cache: dict[int, list[str]] = {}
         self.stdscr = None
 
     def refresh(self) -> None:
         self.rows, self.total_bytes = build_monitor_rows(self.db, self.month)
         self.history_cache.clear()
+        self.sample_cache.clear()
+        self.command_cache.clear()
+        self.command_notes_cache.clear()
         self._apply_filter()
 
     def _apply_filter(self) -> None:
@@ -199,6 +229,39 @@ class CursesMonitor:
         if uid not in self.history_cache:
             self.history_cache[uid] = [dict(item) for item in self.db.user_history(uid, limit=self.history_limit)]
         return self.history_cache[uid]
+
+    def _top_samples_for_selected(self, limit: int = 3) -> list[dict[str, object]]:
+        row = self._selected_row()
+        if row is None:
+            return []
+        uid = int(row["uid"])
+        if uid not in self.sample_cache:
+            self.sample_cache[uid] = [dict(item) for item in self.db.user_top_samples(uid, self.month, limit=max(limit, 1))]
+        return self.sample_cache[uid][: max(limit, 1)]
+
+    def _recent_commands_for_selected(self, limit: int = 5) -> tuple[list[dict[str, object]], list[str]]:
+        row = self._selected_row()
+        if row is None:
+            return [], []
+        uid = int(row["uid"])
+        if uid not in self.command_cache:
+            events, notes = load_recent_commands(
+                login_name=str(row["login_name"]),
+                data_dir=None if row["data_dir"] is None else str(row["data_dir"]),
+                timezone_name=self.db.config.timezone,
+                limit=max(limit, 1),
+            )
+            self.command_cache[uid] = [
+                {
+                    "ts": event.ts,
+                    "source": event.source,
+                    "command": event.command,
+                    "cwd": event.cwd,
+                }
+                for event in events
+            ]
+            self.command_notes_cache[uid] = list(notes)
+        return self.command_cache[uid][: max(limit, 1)], self.command_notes_cache.get(uid, [])
 
     def _set_status(self, message: str) -> None:
         self.status_message = message
@@ -278,6 +341,7 @@ class CursesMonitor:
             self._draw_line(5, right_x, right_width, "No user selected.")
         else:
             percent = (int(selected["total_bytes"]) / self.total_bytes * 100) if self.total_bytes else 0.0
+            detail_height = max(height - 6, 8)
             detail_lines = [
                 f"Name: {selected['display_name']}",
                 f"Login: {selected['login_name']}  UID: {selected['uid']}  Rank: {selected['rank']}",
@@ -285,12 +349,37 @@ class CursesMonitor:
                 f"Month total: {format_bytes(int(selected['total_bytes']))} ({percent:.2f}%)",
                 f"RX: {format_bytes(int(selected['rx_bytes']))}",
                 f"TX: {format_bytes(int(selected['tx_bytes']))}",
-                "",
-                f"Recent {self.history_limit} months:",
             ]
+
+            spike_rows = self._top_samples_for_selected(limit=3)
+            detail_lines.extend(["", "Top spikes this month:"])
+            if spike_rows:
+                for sample_row in spike_rows:
+                    detail_lines.append(
+                        f"{str(sample_row['ts'])[5:16].replace('T', ' ')}  "
+                        f"{format_bytes(int(sample_row['total_bytes']))} "
+                        f"(rx {format_bytes(int(sample_row['rx_bytes']))}, tx {format_bytes(int(sample_row['tx_bytes']))})"
+                    )
+            else:
+                detail_lines.append("No sample spikes recorded yet")
+
+            command_rows, command_notes = self._recent_commands_for_selected(limit=5)
+            detail_lines.extend(["", "Recent commands:"])
+            if command_rows:
+                for command_row in command_rows:
+                    detail_lines.append(_format_command_event_line(command_row))
+            else:
+                detail_lines.append("No recent command history available")
+            if command_notes:
+                detail_lines.append("")
+                for note in command_notes[:2]:
+                    detail_lines.append(f"Note: {note}")
+
+            detail_lines.extend(["", f"Recent {self.history_limit} months:"])
             history_rows = self._history_for_selected()
+            history_room = max(detail_height - len(detail_lines), 2)
             if history_rows:
-                for history_row in history_rows[: max(height - 14, 3)]:
+                for history_row in history_rows[:history_room]:
                     detail_lines.append(
                         f"{history_row['month']}: {format_bytes(int(history_row['total_bytes']))} "
                         f"(rx {format_bytes(int(history_row['rx_bytes']))}, tx {format_bytes(int(history_row['tx_bytes']))})"
@@ -298,7 +387,7 @@ class CursesMonitor:
             else:
                 detail_lines.append("No history recorded yet")
 
-            for offset, line in enumerate(detail_lines):
+            for offset, line in enumerate(detail_lines[:detail_height]):
                 self._draw_line(4 + offset, right_x, right_width, line)
 
         self._draw_line(
@@ -441,7 +530,7 @@ class CursesMonitor:
                 else:
                     self._set_status(
                         f"{selected['display_name']} | total {format_bytes(int(selected['total_bytes']))} | "
-                        f"history shown on the right"
+                        f"spikes, recent commands, and history shown on the right"
                     )
                 continue
             self._set_status("Keys: arrows/jk, /, c, m, e, u, r, q")

@@ -221,6 +221,44 @@ def _read_text_maybe_gzip(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _load_shell_history_events(
+    login_name: str,
+    data_dir: str | None,
+    timezone_name: str,
+) -> tuple[list[CommandEvent], list[str], bool, bool]:
+    events: list[CommandEvent] = []
+    notes: list[str] = []
+    history_events_found = False
+    undated_history_found = False
+
+    for path in _history_candidates(login_name, data_dir):
+        try:
+            exists = path.exists()
+        except PermissionError:
+            notes.append(f"shell history 不可读：{path}")
+            continue
+        if not exists:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except PermissionError:
+            notes.append(f"shell history 不可读：{path}")
+            continue
+        if path.name == ".bash_history":
+            parsed = parse_bash_history(text, timezone_name)
+        elif path.name == ".zsh_history":
+            parsed = parse_zsh_history(text, timezone_name)
+        else:
+            parsed = parse_fish_history(text, timezone_name)
+        if parsed:
+            history_events_found = True
+            events.extend(parsed)
+        if any(event.ts is None for event in parsed):
+            undated_history_found = True
+
+    return events, notes, history_events_found, undated_history_found
+
+
 def load_command_events(
     login_name: str,
     data_dir: str | None,
@@ -256,37 +294,23 @@ def load_command_events(
     else:
         notes.append("未找到 auditd 日志；如果想精确关联命令，建议安装并开启 auditd execve 审计")
 
-    history_events_found = False
-    undated_history_found = False
-    for path in _history_candidates(login_name, data_dir):
-        try:
-            exists = path.exists()
-        except PermissionError:
-            notes.append(f"shell history 不可读：{path}")
-            continue
-        if not exists:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except PermissionError:
-            notes.append(f"shell history 不可读：{path}")
-            continue
-        if path.name == ".bash_history":
-            parsed = parse_bash_history(text, timezone_name)
-        elif path.name == ".zsh_history":
-            parsed = parse_zsh_history(text, timezone_name)
-        else:
-            parsed = parse_fish_history(text, timezone_name)
-        if any(event.ts is None for event in parsed):
-            undated_history_found = True
-        timestamped = [event for event in parsed if event.ts is not None]
-        if timestamped:
-            history_events_found = True
-            events.extend(_filter_events(timestamped, start, end))
+    history_events, history_notes, history_events_found, undated_history_found = _load_shell_history_events(
+        login_name=login_name,
+        data_dir=data_dir,
+        timezone_name=timezone_name,
+    )
+    notes.extend(history_notes)
+    timestamped = [event for event in history_events if event.ts is not None]
+    if timestamped:
+        events.extend(_filter_events(timestamped, start, end))
 
     if not history_events_found and undated_history_found:
         notes.append("找到了 shell history，但没有时间戳，无法和流量突增做可靠对齐")
-    if not history_events_found and not undated_history_found:
+    if history_events_found and not timestamped and undated_history_found:
+        notes.append("找到了 shell history，但没有时间戳，无法和流量突增做可靠对齐")
+    if history_events_found and not timestamped and not undated_history_found:
+        notes.append("找到了 shell history，但没有可解析的时间戳")
+    if not history_events_found:
         notes.append("未找到可用的带时间戳 shell history")
 
     unique: dict[tuple[datetime | None, str, str, int | None], CommandEvent] = {}
@@ -298,6 +322,35 @@ def load_command_events(
         key=lambda item: item.ts or datetime.min.replace(tzinfo=ZoneInfo(timezone_name)),
     )
     return ordered, notes
+
+
+def load_recent_commands(
+    login_name: str,
+    data_dir: str | None,
+    timezone_name: str,
+    limit: int = 5,
+) -> tuple[list[CommandEvent], list[str]]:
+    events, notes, history_found, undated_history_found = _load_shell_history_events(
+        login_name=login_name,
+        data_dir=data_dir,
+        timezone_name=timezone_name,
+    )
+    if not history_found:
+        if not notes:
+            notes.append("未找到可用的 shell history")
+        return [], notes
+
+    timestamped = [event for event in events if event.ts is not None]
+    if timestamped:
+        ordered = sorted(timestamped, key=lambda item: item.ts or datetime.min.replace(tzinfo=ZoneInfo(timezone_name)), reverse=True)
+        return ordered[: max(limit, 1)], notes
+
+    if undated_history_found:
+        ordered = list(reversed(events))
+        notes.append("以下命令来自无时间戳的 shell history，只能近似看作“最近执行过”")
+        return ordered[: max(limit, 1)], notes
+
+    return [], notes
 
 
 def command_event_to_dict(event: CommandEvent) -> dict[str, object]:

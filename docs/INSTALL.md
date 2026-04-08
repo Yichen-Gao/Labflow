@@ -132,6 +132,12 @@ sudo nft list table inet labflow
 lab monitor
 ```
 
+如果管理员还想在右侧看到“其他用户最近执行过什么命令”，建议直接用：
+
+```bash
+sudo lab monitor
+```
+
 如果你暂时不想开界面，也可以先看文本报表：
 
 ```bash
