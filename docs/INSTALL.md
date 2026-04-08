@@ -51,7 +51,7 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 - `user_soft_limit_gb`：单用户提醒阈值
 - `daily_alert_gb`：单日异常流量提醒阈值，例如 `2`
 - `alert_email_to`：异常提醒收件邮箱
-- `smtp_*`：SMTP 发信配置，推荐把密码写到环境变量里
+- `smtp_*`：SMTP 发信配置；如果要让 systemd 定时器直接发信，最省事是把授权码写进本机 `labflow.json`
 - `exclude_dirs`：不参与身份识别的共享目录
 
 建议把这类共享目录放进 `exclude_dirs`：
@@ -157,6 +157,8 @@ lab check-quota
 export LABFLOW_SMTP_PASSWORD='你的 SMTP 授权码'
 lab check-alerts --dry-run
 ```
+
+如果要让定时执行的 `collect` 也能直接发信，最简单的是把 `smtp_password` 写进本机的 `labflow.json`；这个文件默认不会进 Git。
 
 后面定时执行的 `collect` 会自动附带检查，达到阈值就发邮件，同一个用户同一天只提醒一次。
 

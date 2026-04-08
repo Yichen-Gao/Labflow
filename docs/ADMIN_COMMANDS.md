@@ -136,6 +136,8 @@ export LABFLOW_SMTP_PASSWORD='你的 SMTP 授权码'
 lab check-alerts --dry-run
 ```
 
+如果要让 systemd 定时器也直接发信，最简单的是把 `smtp_password` 写进本机的 `labflow.json`；这个文件默认不会进 Git。
+
 达到阈值时，同一个用户同一天只会发一次提醒邮件。
 
 ## 服务和部署排查

@@ -83,7 +83,7 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 - `user_soft_limit_gb`：单用户提醒阈值
 - `daily_alert_gb`：单日流量提醒阈值，例如 `2`
 - `alert_email_to`：告警收件人邮箱列表
-- `smtp_*`：SMTP 发信配置，建议把密码放进环境变量
+- `smtp_*`：SMTP 发信配置；如果要让 systemd 定时器直接发信，最省事是把授权码写进本机 `labflow.json`
 - `exclude_dirs`：共享目录排除列表
 
 建议把共享目录加入 `exclude_dirs`，例如：`datasets`、`shared_datasets`、`models`、`software`。
@@ -212,12 +212,14 @@ lab export-csv --month 2026-04 --output usage-2026-04.csv
 - `smtp_password_env`
 - `smtp_from`
 
-例如把密码放到环境变量里：
+如果只是手动试跑，可以先临时放到环境变量里：
 
 ```bash
 export LABFLOW_SMTP_PASSWORD='你的 SMTP 授权码'
 lab check-alerts --dry-run
 ```
+
+如果要让定时器自动发信，最简单的是把 `smtp_password` 直接写进本机的 `labflow.json`；这个文件默认不会进 Git。
 
 `collect` 定时任务每次运行后都会顺手检查一次；如果某个用户“今天 00:00 到现在”累计超过阈值，就会自动发邮件，而且同一个用户同一天只发一次。
 
