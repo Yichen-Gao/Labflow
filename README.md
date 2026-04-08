@@ -1,75 +1,73 @@
-# labflow
+# Labflow
 
-`labflow` 是一个面向实验室共享服务器的流量统计工具。
+<p align="center">
+  <strong>面向实验室共享服务器的按用户月度外网流量统计工具</strong><br/>
+  自动识别 <code>/datas</code> 下的用户目录 owner，按 UID 统计从每月 1 号到现在的外网流量，并保留历史记录。
+</p>
 
-它会：
-- 从类似 `/datas/<用户名>` 的目录结构里发现用户
-- 将目录 owner 映射到 Linux UID
-- 用 `nftables` 统计每个 UID 的外网流量
-- 按月保存历史，支持查看“本月 1 号到现在”的用量
-- 提供命令行和全屏交互界面
+<p align="center">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" />
+  <img alt="Linux" src="https://img.shields.io/badge/Linux-nftables%20%2B%20systemd-111827?logo=linux&logoColor=white" />
+  <img alt="TUI" src="https://img.shields.io/badge/UI-Full--screen%20TUI-0F766E" />
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-16A34A" />
+</p>
 
-如果你也有一台多人共用的 Linux 服务器，想知道“谁这个月用了多少外网流量”，这个仓库就是干这个的。
+如果你的服务器是多人共用、每个月有总流量额度、又希望知道“到底是谁用掉了多少外网流量”，`Labflow` 就是为这个场景做的。
 
-## 适合什么场景
+## 为什么会有这个项目
 
-适合：
-- 多用户共享 Linux 服务器
-- 每个人有自己的系统账号
-- 每个人有自己的目录，比如 `/datas/alice`、`/datas/bob`
-- 想按“自然月”统计每个人的外网流量，并保留历史
+很多实验室服务器都会遇到同一个问题：
 
-不适合：
-- 多个人共用同一个 Linux 账号跑任务
-- 只靠目录名区分用户，但进程实际都跑在同一个 UID 下
+- 机器是多人共用的，但外网流量额度按整机算
+- 想知道从每月 1 号到现在，每个用户分别用了多少流量
+- 月底要自动重新开始统计，但历史还得保留
+- 日常想快速看排行榜，排查谁突然出现异常流量
 
-一句话讲清楚：
-`labflow` 实际上是“按 UID 记账”，`/datas/<用户名>` 只是帮助识别“这个 UID 对应谁”。
+`Labflow` 的设计目标就是：部署一次，之后日常只需要输入 `lab monitor`。
 
-## 工作原理
+## 核心能力
 
-- 扫描 `data_root` 下的用户目录，默认是 `/datas`
-- 读取目录 owner，得到 UID 和登录名
-- 在外网网卡上安装 `nftables` 规则
-  - 发出去的流量：按 `meta skuid` 记到对应 UID
-  - 回来的流量：通过 `ct mark` 归回同一个 UID
-- 定时把计数器增量写入 SQLite
-- 以 `YYYY-MM` 为单位聚合，所以历史会一直保留
+- 自动扫描 `data_root` 下的用户目录，默认适合 `/datas/<用户名>` 结构
+- 根据目录 owner 识别 UID，按 UID 做月度外网流量统计
+- 只统计指定外网网卡，不把本机内部通信混进去
+- 按自然月聚合，历史月报自动保留，不需要手动清零
+- 提供 `report`、`top`、`history`、`export-csv`、`check-quota` 等命令
+- 提供全屏终端监控界面，支持方向键上下选择、搜索、导出和切换月份
+- 提供系统级 `lab` 启动命令，任何目录都能直接打开
 
-`2026-04` 的意思就是：`2026-04-01 00:00` 到当前时刻，使用配置文件里的时区。
+## 界面预览
 
-## 使用前提
+下面是项目内置 TUI 和 CLI 的示意图，实际内容会根据你的服务器数据变化。
 
-部署前先确认这几点：
+| 全屏监控 | 排行与报表 |
+| --- | --- |
+| ![Labflow monitor](docs/images/monitor.svg) | ![Labflow report](docs/images/report.svg) |
 
-- 每个用户最好有独立 Linux UID
-- 用户目录 owner 和实际跑任务的 UID 基本一致
-- 你知道服务器的外网接口名，例如 `eth0`、`ens2f2`
-- 机器上有 `Python 3.10+`、`nftables`、`systemd`
+## 适用前提
+
+部署前先确认下面几点：
+
+- 服务器是 Linux，且有 `Python 3.10+`、`nftables`、`systemd`
 - 你有 root 权限，至少能执行一次安装脚本
+- 每个用户最好有独立 Linux UID
+- 用户目录结构类似 `/datas/<用户名>`
+- 你知道服务器的外网接口名，例如 `eth0`、`ens2f2`
 
-建议把这些共享目录排除掉，不要当成个人身份：
-- `datasets`
-- `shared_datasets`
-- `models`
-- `software`
-- 其他公共目录
+不太适合的情况：
 
-## 仓库里最重要的东西
+- 多个人共用同一个 Linux 账号
+- 只靠目录名区分人，但实际任务都跑在同一个 UID 下
+- 你需要和校园网网关结算做到字节级完全一致
 
-- `labflow.example.json`：示例配置
-- `labflow.json`：你的本机配置，不应提交到 Git
-- `src/labflow/`：核心代码
-- `contrib/install-system-wide-lab.sh`：给所有用户安装 `lab` 命令
-- `contrib/install-lab-launcher.sh`：只给当前用户安装 `lab` 命令
+一句话：`Labflow` 统计的是“本机用户 UID 在外网接口上的实际流量”，适合做实验室内部审计、排行和预警；如果学校最终结算看的是 `ipgw s` 或其他网关账单，请把它当成非常接近的本机侧观测，而不是官方计费系统本身。
 
-## 快速部署
+## 5 分钟快速开始
 
-下面是一套最短可用流程。
-
-### 1. 准备配置
+### 1. 克隆仓库并准备配置
 
 ```bash
+git clone https://github.com/Yichen-Gao/Labflow.git
+cd Labflow
 cp labflow.example.json labflow.json
 PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 ```
@@ -82,36 +80,33 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 - `total_monthly_quota_gb`：整机月额度
 - `user_soft_limit_gb`：单用户提醒阈值
 - `exclude_dirs`：共享目录排除列表
-- `extra_users`：如果你想把 `root` 也纳入统计，可以保留
 
-### 2. 先同步用户，确认识别是否正确
+建议把共享目录加入 `exclude_dirs`，例如：`datasets`、`shared_datasets`、`models`、`software`。
+
+### 2. 先确认用户识别没问题
 
 ```bash
 PYTHONPATH=src python3 -m labflow --config labflow.json sync-users
 PYTHONPATH=src python3 -m labflow --config labflow.json show-users
 ```
 
-如果这里识别出来的用户不对，先改 `exclude_dirs`，不要急着安装规则。
+如果这里识别结果不对，先调整 `exclude_dirs` 和目录 owner，再继续安装。
 
-### 3. 生成 systemd 部署文件
+### 3. 生成并安装 systemd / nftables 规则
 
 ```bash
 PYTHONPATH=src python3 -m labflow --config labflow.json write-systemd
-```
-
-### 4. 安装规则和定时采集
-
-```bash
 sudo ./contrib/systemd/generated/install-systemd-root.sh
 ```
 
-这个脚本会：
+安装脚本会自动完成：
+
 - 同步用户
 - 安装 `nftables` 规则
-- 采一轮初始数据
+- 采一轮初始样本
 - 启用定时任务
 
-### 5. 给命令行装一个统一入口
+### 4. 安装全局启动命令
 
 只给当前用户安装：
 
@@ -127,128 +122,86 @@ sudo ./contrib/install-system-wide-lab.sh
 
 如果你希望任何用户在任何目录都能直接输入 `lab monitor`，用第二个。
 
-## 最推荐的使用方式
-
-安装完以后，直接：
+### 5. 打开监控界面
 
 ```bash
 lab monitor
 ```
 
-这是一个全屏界面，不需要记很多命令。
+## 日常使用
 
-### 界面快捷键
+最常用的是下面几条：
 
-- `↑ / ↓` 或 `j / k`：上下选择用户
-- `/`：搜索用户，支持用户名 / 显示名 / UID
-- `c`：清空搜索
-- `m`：切换月份
-- `e`：导出当前月份 CSV
-- `u`：导出当前选中用户的历史 CSV
-- `r`：刷新
-- `q`：退出
+```bash
+lab monitor
+lab report
+lab top --limit 10
+lab history wuxi
+lab export-csv --month 2026-04 --output usage-2026-04.csv
+lab check-quota
+```
 
-左边是用户排行，默认按总流量从大到小排序；右边是当前选中用户的本月明细和历史。
+默认展示按总流量从高到低排序。
 
-## 常用命令
+## 常见场景
 
-看本月完整排行：
+### 想看从本月 1 号到现在谁用得最多
 
 ```bash
 lab report
 ```
 
-看某个月完整排行，例如看 2026 年 4 月：
+### 只看前 10 名
 
 ```bash
-lab report --month 2026-04
+lab top --limit 10
 ```
 
-只看前 10 名：
-
-```bash
-lab top --month 2026-04 --limit 10
-```
-
-导出某个月的排行 CSV：
-
-```bash
-lab export-csv --month 2026-04 --output usage-2026-04.csv
-```
-
-看某个用户的历史：
+### 想查某个用户的历史月报
 
 ```bash
 lab history gaoyichen
 ```
 
-看额度状态：
+### 想导出报表给老师或管理员
 
 ```bash
-lab check-quota
+lab export-csv --month 2026-04 --output usage-2026-04.csv
 ```
 
-## 运维排查
-
-看定时任务是否正常：
+### 想确认定时任务是否正常运行
 
 ```bash
 systemctl status labflow-refresh.timer labflow-collect.timer
-```
-
-看最近执行日志：
-
-```bash
 journalctl -u labflow-collect.service -u labflow-refresh.service -n 50 --no-pager
 ```
 
-看当前安装的规则：
+## 为什么“只是登录看日志”也可能出现几十 MB 甚至更多流量
 
-```bash
-sudo nft list table inet labflow
-```
+常见原因包括：
 
-修改了 `labflow.json` 后，重新生成并安装：
+- `SSH` 登录本身会有少量流量
+- `VSCode Remote` 会同步扩展、拉取文件列表、更新索引
+- `Jupyter`、远程预览、Web IDE 会把文件内容和页面资源通过网络传输
+- 你以为在“看本地数据”，但数据其实来自网络挂载或远端源
+- 某个脚本、下载器、包管理器在后台悄悄拉了数据
 
-```bash
-PYTHONPATH=src python3 -m labflow --config labflow.json write-systemd
-sudo ./contrib/systemd/generated/install-systemd-root.sh
-```
+所以“我只是看了一眼日志 / 看了一眼数据集”不一定等于“没有外网流量”。如果某一分钟突然出现大额 `RX`，更像是发生了真实下载，而不是单纯的终端文本回显。
 
-## 常见问题
+## 文档
 
-### 1. 为什么切换到别的用户后 `lab` 找不到？
+- `docs/INSTALL.md`：部署教程
+- `docs/ADMIN_COMMANDS.md`：管理员日常命令速查
+- `contrib/systemd/README.md`：systemd 生成文件说明
 
-因为你装的是“当前用户自己的启动器”。
+## 仓库结构
 
-如果想让所有用户都能用：
+- `src/labflow/`：核心实现
+- `tests/`：测试
+- `labflow.example.json`：示例配置
+- `contrib/install-lab-launcher.sh`：给当前用户安装 `lab`
+- `contrib/install-system-wide-lab.sh`：给所有用户安装 `lab`
 
-```bash
-sudo ./contrib/install-system-wide-lab.sh
-```
+## License
 
-### 2. 为什么有些用户统计不到？
-
-通常是下面几种情况：
-- 用户实际跑任务时不是自己的 UID
-- 多个人共用同一个账号
-- 目录 owner 和真实运行 UID 不一致
-- 这个连接不是“本机用户主动发起的外网连接”
-
-### 3. 为什么公共目录会干扰识别？
-
-因为 `labflow` 会扫描 `data_root` 下的目录 owner。公共目录如果不排除，也会被当成“一个身份”。
-
-所以要把共享目录加入 `exclude_dirs`。
-
-## 额外说明
-
-- 当前版本重点是“用户主动发起的外网流量”
-- 历史不会清空，而是按月保存
-- 数据库存放在 `var/labflow.db`
-- 本机配置 `labflow.json`、数据库 `var/`、生成的 systemd 文件默认都不会提交到 Git
-
-## 相关文档
-
-- `docs/INSTALL.md`
-- `docs/ADMIN_COMMANDS.md`
+MIT

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Labflow monitor preview</title>
+  <desc id="desc">A stylized screenshot of the Labflow full-screen terminal monitor.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#020617" flood-opacity="0.4" />
+    </filter>
+  </defs>
+  <rect width="1280" height="760" fill="#e5e7eb" />
+  <rect x="56" y="52" width="1168" height="656" rx="24" fill="url(#bg)" filter="url(#shadow)" />
+  <rect x="56" y="52" width="1168" height="48" rx="24" fill="#1f2937" />
+  <circle cx="90" cy="76" r="8" fill="#ef4444" />
+  <circle cx="116" cy="76" r="8" fill="#f59e0b" />
+  <circle cx="142" cy="76" r="8" fill="#10b981" />
+  <text x="176" y="82" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="20">lab monitor  --month 2026-04</text>
+
+  <rect x="92" y="124" width="378" height="528" rx="18" fill="#111827" stroke="#334155" />
+  <rect x="494" y="124" width="694" height="528" rx="18" fill="#111827" stroke="#334155" />
+
+  <text x="116" y="162" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="24">Users (sorted by total)</text>
+  <text x="520" y="162" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="24">Selected user: wuxi</text>
+
+  <rect x="108" y="188" width="346" height="58" rx="10" fill="#134e4a" />
+  <text x="126" y="224" fill="#ccfbf1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="24">&gt; wuxi            267.24 MiB</text>
+  <text x="126" y="278" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">  root              131.32 KiB</text>
+  <text x="126" y="326" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">  huangyijie             80 B</text>
+  <text x="126" y="374" fill="#64748b" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="20">  ...</text>
+
+  <text x="526" y="214" fill="#93c5fd" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">Month total     267.24 MiB</text>
+  <text x="526" y="252" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">RX              250.16 MiB</text>
+  <text x="526" y="290" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">TX               17.08 MiB</text>
+  <text x="526" y="328" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">Quota share       0.29 %</text>
+
+  <text x="526" y="396" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="24">Recent monthly history</text>
+  <text x="526" y="438" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">2026-04   total=267.24 MiB   rx=250.16 MiB   tx=17.08 MiB</text>
+  <text x="526" y="474" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">2026-03   total=0 B          rx=0 B          tx=0 B</text>
+  <text x="526" y="510" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">2026-02   total=0 B          rx=0 B          tx=0 B</text>
+
+  <rect x="518" y="546" width="646" height="72" rx="14" fill="#0b1220" stroke="#1e293b" />
+  <text x="542" y="587" fill="#f59e0b" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="20">Hint: if RX jumps in one minute, it is usually a real download rather than plain SSH text.</text>
+
+  <rect x="92" y="668" width="1096" height="20" rx="10" fill="#1e293b" />
+  <text x="108" y="684" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="16">/ search   m month   e export csv   u user history   r refresh   q quit</text>
+</svg>

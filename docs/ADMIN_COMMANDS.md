@@ -1,131 +1,147 @@
-# Admin Commands
+# 管理命令速查
 
-## Core status
+这份文档按“管理员日常最常做的事情”来整理，尽量做到拿起来就能用。
 
-Install the global launcher once:
-
-```bash
-./contrib/install-lab-launcher.sh
-```
-
-Install it for all users on the server:
-
-```bash
-sudo ./contrib/install-system-wide-lab.sh
-```
-
-Open the full-screen monitor from any directory:
+## 先记住一个入口
 
 ```bash
 lab monitor
 ```
 
-Inside the monitor:
+如果你平时只记一个命令，就记这个。它会打开全屏界面，默认按总流量从高到低排序。
 
-- arrow keys or `j`/`k` move through users
-- `/` searches by display name, login name, or UID
-- `c` clears the current search
-- `m` changes month
-- `e` exports the current month CSV
-- `u` exports the selected user's history CSV
-- `r` refreshes
-- `q` exits
+## 最常用的 6 条命令
 
-Open the older line-based menu if you need a simpler fallback terminal mode:
+看本月完整排行：
 
 ```bash
-./labflow-menu
+lab report
 ```
 
-If you still want a direct non-interactive launcher, use:
+看某个月排行：
 
 ```bash
 lab report --month 2026-04
 ```
 
-Show the current month ranking, highest traffic first:
+只看前 10 名：
 
 ```bash
-PYTHONPATH=src python3 -m labflow --config labflow.json report
+lab top --month 2026-04 --limit 10
 ```
 
-Show a specific month such as `2026-04`. If the current date is April 8, 2026, that report means April 1, 2026 00:00 through now in `Asia/Shanghai`:
+看某个用户的历史：
 
 ```bash
-PYTHONPATH=src python3 -m labflow --config labflow.json report --month 2026-04
+lab history wuxi
 ```
 
-Show only the top 10 users for that month:
+导出某个月 CSV：
 
 ```bash
-PYTHONPATH=src python3 -m labflow --config labflow.json top --month 2026-04 --limit 10
+lab export-csv --month 2026-04 --output usage-2026-04.csv
 ```
 
-Check total quota and user soft limit:
+看整机额度状态：
 
 ```bash
-PYTHONPATH=src python3 -m labflow --config labflow.json check-quota
+lab check-quota
 ```
 
-## Export
+## `lab monitor` 里怎么操作
 
-Export the ranked monthly report to CSV:
+- `↑ / ↓` 或 `j / k`：上下移动
+- `/`：搜索用户名 / 显示名 / UID
+- `c`：清空搜索
+- `m`：切换月份
+- `e`：导出当前月份 CSV
+- `u`：导出当前选中用户历史 CSV
+- `r`：刷新
+- `q`：退出
+
+## 想快速回答管理员常见问题
+
+### 谁从本月 1 号到现在用得最多？
 
 ```bash
-PYTHONPATH=src python3 -m labflow --config labflow.json export-csv --month 2026-04 --output usage-2026-04.csv
+lab report
 ```
 
-## User details
-
-Show history for one user:
+### 只想看前几名，不想刷一大屏？
 
 ```bash
-PYTHONPATH=src python3 -m labflow --config labflow.json history gaoyichen
+lab top --limit 10
 ```
 
-List the tracked users:
+### 想看某个人是不是最近几个月都偏高？
 
 ```bash
-PYTHONPATH=src python3 -m labflow --config labflow.json show-users
+lab history <用户名>
 ```
 
-## Service management
+### 想把排行榜发给老师或做存档？
 
-Show timers:
+```bash
+lab export-csv --month 2026-04 --output usage-2026-04.csv
+```
+
+## 服务和部署排查
+
+查看定时任务状态：
 
 ```bash
 systemctl status labflow-refresh.timer labflow-collect.timer
 ```
 
-Show the latest collection runs:
+查看最近执行日志：
 
 ```bash
 journalctl -u labflow-collect.service -u labflow-refresh.service -n 50 --no-pager
 ```
 
-Show the installed nftables table:
+查看当前 `nftables` 规则：
 
 ```bash
 sudo nft list table inet labflow
 ```
 
-## Maintenance
-
-Refresh users and reinstall rules immediately:
-
-```bash
-sudo contrib/systemd/generated/run-refresh.sh
-```
-
-Collect once immediately:
-
-```bash
-sudo contrib/systemd/generated/run-collect.sh
-```
-
-If you change `labflow.json`, regenerate the units:
+改完配置后重新部署：
 
 ```bash
 PYTHONPATH=src python3 -m labflow --config labflow.json write-systemd
-sudo contrib/systemd/generated/install-systemd-root.sh
+sudo ./contrib/systemd/generated/install-systemd-root.sh
+```
+
+## 排查“某个用户突然暴涨”时怎么做
+
+先看这个用户的历史月报：
+
+```bash
+lab history <用户名>
+```
+
+再看本月总排行，确认是不是刚刚冲上来：
+
+```bash
+lab report --month 2026-04
+```
+
+最后结合采集日志看时间段：
+
+```bash
+journalctl -u labflow-collect.service -n 100 --no-pager
+```
+
+经验上：
+
+- 纯 `SSH` 登录通常只有少量流量
+- 如果某一分钟突然出现很高的 `RX`，更像是发生了真实下载
+- `VSCode Remote`、`Jupyter`、远程文件预览、网络挂载目录读取，都可能带来明显流量
+
+## 如果 `lab` 命令在别的用户下不可用
+
+说明你大概率只装了当前用户版本。给整台机器安装：
+
+```bash
+sudo ./contrib/install-system-wide-lab.sh
 ```
