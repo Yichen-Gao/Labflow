@@ -276,3 +276,29 @@ class Database:
                 """,
                 (uid, limit),
             ).fetchall()
+
+    def user_top_samples(self, uid: int, month: str, limit: int = 10) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT ts, month, uid, rx_bytes, tx_bytes, (rx_bytes + tx_bytes) AS total_bytes
+                FROM samples
+                WHERE uid = ? AND month = ?
+                ORDER BY total_bytes DESC, ts DESC
+                LIMIT ?
+                """,
+                (uid, month, limit),
+            ).fetchall()
+
+    def user_samples_between(self, uid: int, start_ts: str, end_ts: str, limit: int = 200) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT ts, month, uid, rx_bytes, tx_bytes, (rx_bytes + tx_bytes) AS total_bytes
+                FROM samples
+                WHERE uid = ? AND ts >= ? AND ts <= ?
+                ORDER BY ts ASC
+                LIMIT ?
+                """,
+                (uid, start_ts, end_ts, limit),
+            ).fetchall()

@@ -12,6 +12,7 @@ from labflow.config import LabflowConfig
 from labflow.db import Database
 from labflow.discovery import discover_users
 from labflow.cli import _sorted_report_rows, _write_report_csv
+from labflow.forensics import parse_audit_exec_events, parse_bash_history, parse_zsh_history
 from labflow.interactive import build_monitor_rows, find_matching_users, sanitize_filename
 from labflow.nftables import build_rules, parse_counter_listing
 from labflow.systemd_assets import parse_default_interface
@@ -160,6 +161,40 @@ class LabflowTests(unittest.TestCase):
             self.assertEqual(30, total)
             self.assertEqual([1000, 1001], [row["uid"] for row in rows])
             self.assertEqual(0, rows[1]["total_bytes"])
+
+    def test_parse_audit_exec_events(self) -> None:
+        lines = [
+            'type=SYSCALL msg=audit(1775638895.000:420): arch=c000003e syscall=59 success=yes exit=0 ppid=111 pid=222 auid=952 uid=952 gid=952 euid=952 suid=952 fsuid=952 tty=pts0 ses=7 comm="python3" exe="/usr/bin/python3" key="labflow-exec"',
+            'type=EXECVE msg=audit(1775638895.000:420): argc=3 a0="python3" a1="-m" a2="http.server"',
+            'type=CWD msg=audit(1775638895.000:420): cwd="/datas/wuxi/project"',
+        ]
+        start = datetime(2026, 4, 8, 17, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        end = datetime(2026, 4, 8, 17, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+        parsed = parse_audit_exec_events(lines, target_uid=952, start=start, end=end, timezone_name="Asia/Shanghai")
+        self.assertEqual(1, len(parsed))
+        self.assertEqual("python3 -m http.server", parsed[0].command)
+        self.assertEqual("/datas/wuxi/project", parsed[0].cwd)
+        self.assertEqual(222, parsed[0].pid)
+
+    def test_parse_bash_history_with_timestamps(self) -> None:
+        text = "\n".join(
+            [
+                "#1775638860",
+                "ls -lah",
+                "#1775638895",
+                "python train.py --epochs 1",
+            ]
+        )
+        parsed = parse_bash_history(text, "Asia/Shanghai")
+        self.assertEqual(2, len(parsed))
+        self.assertEqual("python train.py --epochs 1", parsed[1].command)
+        self.assertIsNotNone(parsed[1].ts)
+
+    def test_parse_zsh_history(self) -> None:
+        text = ": 1775638895:0;wget https://example.com/file\n"
+        parsed = parse_zsh_history(text, "Asia/Shanghai")
+        self.assertEqual(1, len(parsed))
+        self.assertEqual("wget https://example.com/file", parsed[0].command)
 
 
 if __name__ == "__main__":

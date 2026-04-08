@@ -5,11 +5,14 @@ import csv
 import json
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .config import load_config
 from .db import Database
 from .discovery import discover_users
+from .forensics import command_event_to_dict, load_command_events
 from .interactive import CursesMonitor, InteractiveMenu
 from .models import UserRecord
 from .nftables import build_rules, install_rules, list_counters
@@ -105,6 +108,18 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--limit", type=int, default=12, help="How many months to show")
     history.add_argument("--json", action="store_true", help="Emit JSON")
 
+    trace = subparsers.add_parser("trace", help="Show likely commands around a user's traffic spike")
+    trace.add_argument("selector", help="UID, login name, display name, or exact data_dir")
+    trace.add_argument("--month", help="Month in YYYY-MM format; defaults to the current month")
+    trace.add_argument(
+        "--around",
+        help="Center time in ISO format; defaults to this user's largest traffic sample in the month",
+    )
+    trace.add_argument("--window-minutes", type=int, default=15, help="How wide the command search window should be")
+    trace.add_argument("--sample-limit", type=int, default=5, help="How many spike samples to show")
+    trace.add_argument("--event-limit", type=int, default=20, help="How many command events to show")
+    trace.add_argument("--json", action="store_true", help="Emit JSON")
+
     check_quota = subparsers.add_parser("check-quota", help="Compare current month usage against quotas")
     check_quota.add_argument("--month", help="Month in YYYY-MM format; defaults to the current month")
 
@@ -191,6 +206,13 @@ def _print_ranked_rows(rows: list[dict[str, object]]) -> None:
             f"uid={row['uid']} display={row['display_name']} total={format_bytes(int(row['total_bytes']))} "
             f"rx={format_bytes(int(row['rx_bytes']))} tx={format_bytes(int(row['tx_bytes']))}"
         )
+
+
+def _parse_trace_time(raw_value: str, timezone_name: str) -> datetime:
+    parsed = datetime.fromisoformat(raw_value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(timezone_name))
+    return parsed.astimezone(ZoneInfo(timezone_name))
 
 
 def handle_init_config(args: argparse.Namespace) -> int:
@@ -396,6 +418,114 @@ def handle_history(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_trace(args: argparse.Namespace) -> int:
+    config, db = load_runtime(args.config)
+    user = db.find_user(args.selector)
+    if user is None:
+        print(f"Unknown user selector: {args.selector}", file=sys.stderr)
+        return 1
+
+    month = args.month or current_month(config)
+    top_samples = [dict(row) for row in db.user_top_samples(int(user["uid"]), month, limit=max(args.sample_limit, 1))]
+
+    if args.around:
+        center_dt = _parse_trace_time(args.around, config.timezone)
+    elif top_samples:
+        center_dt = _parse_trace_time(str(top_samples[0]["ts"]), config.timezone)
+    else:
+        print(
+            f"No traffic samples recorded for uid={user['uid']} display={user['display_name']} in {month}",
+            file=sys.stderr,
+        )
+        return 1
+
+    window_minutes = max(args.window_minutes, 1)
+    window = timedelta(minutes=window_minutes)
+    start = center_dt - window
+    end = center_dt + window
+    nearby_samples = [
+        dict(row)
+        for row in db.user_samples_between(
+            int(user["uid"]),
+            start.isoformat(timespec="seconds"),
+            end.isoformat(timespec="seconds"),
+            limit=max(args.sample_limit * 12, 30),
+        )
+    ]
+
+    center_sample = None
+    if nearby_samples:
+        center_sample = min(
+            nearby_samples,
+            key=lambda row: abs(_parse_trace_time(str(row["ts"]), config.timezone) - center_dt),
+        )
+    elif top_samples and not args.around:
+        center_sample = top_samples[0]
+
+    events, notes = load_command_events(
+        login_name=str(user["login_name"]),
+        data_dir=None if user["data_dir"] is None else str(user["data_dir"]),
+        target_uid=int(user["uid"]),
+        start=start,
+        end=end,
+        timezone_name=config.timezone,
+    )
+    event_rows = [command_event_to_dict(event) for event in events[: max(args.event_limit, 0)]]
+
+    if args.json:
+        payload = {
+            "user": dict(user),
+            "month": month,
+            "center_time": center_dt.isoformat(timespec="seconds"),
+            "window_minutes": window_minutes,
+            "center_sample": center_sample,
+            "top_samples": top_samples,
+            "nearby_samples": nearby_samples,
+            "events": event_rows,
+            "notes": notes,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"Trace for uid={user['uid']} display={user['display_name']} login={user['login_name']}")
+    print(f"Month: {month}")
+    print(f"Window: {start.isoformat(timespec='seconds')} .. {end.isoformat(timespec='seconds')}")
+    if center_sample is not None:
+        print(
+            "Center sample: "
+            f"ts={center_sample['ts']} total={format_bytes(int(center_sample['total_bytes']))} "
+            f"rx={format_bytes(int(center_sample['rx_bytes']))} tx={format_bytes(int(center_sample['tx_bytes']))}"
+        )
+    print("Top spike samples this month:")
+    if not top_samples:
+        print("No traffic samples recorded yet")
+    else:
+        for row in top_samples:
+            print(
+                f"ts={row['ts']} total={format_bytes(int(row['total_bytes']))} "
+                f"rx={format_bytes(int(row['rx_bytes']))} tx={format_bytes(int(row['tx_bytes']))}"
+            )
+    print("Nearby command events:")
+    if not event_rows:
+        print("No timestamped command events found in the selected window")
+    else:
+        for row in event_rows:
+            extra = []
+            if row["source"]:
+                extra.append(str(row["source"]))
+            if row["pid"] is not None:
+                extra.append(f"pid={row['pid']}")
+            if row["cwd"]:
+                extra.append(f"cwd={row['cwd']}")
+            print(f"ts={row['ts']} [{' '.join(extra)}] {row['command']}")
+    if notes:
+        print("Notes:")
+        for note in notes:
+            print(f"- {note}")
+    print("Hint: this command shows what the user ran near the spike, but cannot prove byte-for-byte attribution per command.")
+    return 0
+
+
 def handle_check_quota(args: argparse.Namespace) -> int:
     config, db = load_runtime(args.config)
     month = args.month or current_month(config)
@@ -446,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
         "menu": handle_menu,
         "export-csv": handle_export_csv,
         "history": handle_history,
+        "trace": handle_trace,
         "check-quota": handle_check_quota,
     }
     return handlers[args.command](args)

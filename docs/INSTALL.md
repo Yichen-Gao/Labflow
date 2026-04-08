@@ -140,6 +140,29 @@ lab top --limit 10
 lab check-quota
 ```
 
+## 可选：如果你还想排查“他当时跑了什么命令”
+
+只做流量统计时，`Labflow` 只能告诉你：
+
+- 谁在什么时间段出现了流量突增
+- 这次突增大概是下载多还是上传多
+
+如果你还想继续看到“这段时间附近执行过什么命令”，建议额外开启 `auditd` 的 `execve` 审计：
+
+```bash
+sudo apt install auditd
+sudo ./contrib/install-auditd-exec-rules.sh
+```
+
+之后可以这样排查：
+
+```bash
+lab trace <用户名>
+lab trace <用户名> --around 2026-04-08T17:01:35+08:00 --window-minutes 20
+```
+
+注意：`trace` 能帮你把“流量高峰”和“附近执行过的命令”对起来，但不能严格证明某条命令精确消耗了多少字节。
+
 ## 后续如果改了配置怎么办
 
 修改 `labflow.json` 后，重新生成并安装一次即可：

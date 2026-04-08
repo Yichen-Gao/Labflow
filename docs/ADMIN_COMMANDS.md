@@ -36,6 +36,13 @@ lab top --month 2026-04 --limit 10
 lab history wuxi
 ```
 
+排查某个用户流量高峰附近跑过什么命令：
+
+```bash
+lab trace wuxi
+lab trace wuxi --around 2026-04-08T17:01:35+08:00 --window-minutes 20
+```
+
 导出某个月 CSV：
 
 ```bash
@@ -77,6 +84,18 @@ lab top --limit 10
 
 ```bash
 lab history <用户名>
+```
+
+### 想知道某次突增附近到底执行了什么？
+
+```bash
+lab trace <用户名>
+```
+
+如果你已经知道突增时间，可以直接指定：
+
+```bash
+lab trace <用户名> --around 2026-04-08T17:01:35+08:00 --window-minutes 20
 ```
 
 ### 想把排行榜发给老师或做存档？
@@ -137,6 +156,7 @@ journalctl -u labflow-collect.service -n 100 --no-pager
 - 纯 `SSH` 登录通常只有少量流量
 - 如果某一分钟突然出现很高的 `RX`，更像是发生了真实下载
 - `VSCode Remote`、`Jupyter`、远程文件预览、网络挂载目录读取，都可能带来明显流量
+- 如果想继续追“那一分钟附近到底执行了什么命令”，就用 `lab trace <用户名>`
 
 ## 如果 `lab` 命令在别的用户下不可用
 
@@ -145,3 +165,14 @@ journalctl -u labflow-collect.service -n 100 --no-pager
 ```bash
 sudo ./contrib/install-system-wide-lab.sh
 ```
+
+## 如果 `lab trace` 看不到命令
+
+最常见是因为还没开启命令审计。建议先装：
+
+```bash
+sudo apt install auditd
+sudo ./contrib/install-auditd-exec-rules.sh
+```
+
+另外，`trace` 最好由管理员运行；如果普通用户没有权限读取 `auditd` 日志，也会看不到结果。

@@ -32,6 +32,7 @@
 - 只统计指定外网网卡，不把本机内部通信混进去
 - 按自然月聚合，历史月报自动保留，不需要手动清零
 - 提供 `report`、`top`、`history`、`export-csv`、`check-quota` 等命令
+- 提供 `trace` 命令，排查某个流量突增时段附近执行过什么命令
 - 提供全屏终端监控界面，支持方向键上下选择、搜索、导出和切换月份
 - 提供系统级 `lab` 启动命令，任何目录都能直接打开
 
@@ -137,6 +138,7 @@ lab monitor
 lab report
 lab top --limit 10
 lab history wuxi
+lab trace wuxi
 lab export-csv --month 2026-04 --output usage-2026-04.csv
 lab check-quota
 ```
@@ -163,6 +165,20 @@ lab top --limit 10
 lab history gaoyichen
 ```
 
+### 想排查某个用户某次突增时到底跑了什么
+
+```bash
+lab trace wuxi
+lab trace wuxi --around 2026-04-08T17:01:35+08:00 --window-minutes 20
+```
+
+`trace` 会先找到这个用户的流量高峰样本，再去时间窗口里找：
+
+- `auditd` 里的 `execve` 记录
+- 带时间戳的 shell history
+
+注意：它能告诉你“这个时段附近执行过什么命令”，但不能严格证明某一条命令精确消耗了多少字节。
+
 ### 想导出报表给老师或管理员
 
 ```bash
@@ -188,11 +204,29 @@ journalctl -u labflow-collect.service -u labflow-refresh.service -n 50 --no-page
 
 所以“我只是看了一眼日志 / 看了一眼数据集”不一定等于“没有外网流量”。如果某一分钟突然出现大额 `RX`，更像是发生了真实下载，而不是单纯的终端文本回显。
 
+## 如果你还想知道“突增时跑了什么命令”
+
+默认的流量统计只能告诉你：
+
+- 谁在什么时段流量突然升高
+- 那次升高主要是 `RX` 还是 `TX`
+
+如果你还想继续追到“这个时间附近到底执行了什么命令”，建议把命令审计也打开：
+
+```bash
+sudo apt install auditd
+sudo ./contrib/install-auditd-exec-rules.sh
+lab trace <用户名>
+```
+
+这样以后再出现突增，`lab trace` 就能把流量高峰和命令执行时间对上。
+
 ## 文档
 
 - `docs/INSTALL.md`：部署教程
 - `docs/ADMIN_COMMANDS.md`：管理员日常命令速查
 - `contrib/systemd/README.md`：systemd 生成文件说明
+- `contrib/install-auditd-exec-rules.sh`：安装 `auditd` 命令审计规则
 
 ## 仓库结构
 
