@@ -448,20 +448,41 @@ class CursesMonitor:
             curses.use_default_colors()
         except curses.error:
             pass
-        palette = {
-            "title": (curses.COLOR_BLACK, curses.COLOR_CYAN),
-            "shortcuts": (curses.COLOR_BLACK, curses.COLOR_YELLOW),
-            "border": (curses.COLOR_CYAN, -1),
-            "pane_title": (curses.COLOR_GREEN, -1),
-            "selected": (curses.COLOR_BLACK, curses.COLOR_GREEN),
-            "row_alt": (curses.COLOR_CYAN, -1),
-            "muted": (curses.COLOR_BLUE, -1),
-            "accent": (curses.COLOR_MAGENTA, -1),
-            "value": (curses.COLOR_GREEN, -1),
-            "warning": (curses.COLOR_YELLOW, -1),
-            "popup": (curses.COLOR_BLACK, curses.COLOR_WHITE),
-            "popup_title": (curses.COLOR_BLACK, curses.COLOR_MAGENTA),
-        }
+        if getattr(curses, "COLORS", 0) >= 256:
+            # A muted, terminal-friendly palette inspired by Nord/Solarized:
+            # keep the structure cool and low-saturation, and reserve warmer
+            # accents for state changes like warnings and highlighted values.
+            palette = {
+                "title": (255, 67),
+                "shortcuts": (252, 239),
+                "border": (110, 239),
+                "status": (252, 239),
+                "pane_title": (110, -1),
+                "selected": (235, 110),
+                "row_alt": (245, -1),
+                "muted": (244, -1),
+                "accent": (139, -1),
+                "value": (144, -1),
+                "warning": (173, -1),
+                "popup": (252, 239),
+                "popup_title": (255, 67),
+            }
+        else:
+            palette = {
+                "title": (curses.COLOR_WHITE, curses.COLOR_BLUE),
+                "shortcuts": (curses.COLOR_WHITE, -1),
+                "border": (curses.COLOR_CYAN, -1),
+                "status": (curses.COLOR_CYAN, -1),
+                "pane_title": (curses.COLOR_CYAN, -1),
+                "selected": (curses.COLOR_BLACK, curses.COLOR_CYAN),
+                "row_alt": (curses.COLOR_WHITE, -1),
+                "muted": (curses.COLOR_BLUE, -1),
+                "accent": (curses.COLOR_MAGENTA, -1),
+                "value": (curses.COLOR_GREEN, -1),
+                "warning": (curses.COLOR_YELLOW, -1),
+                "popup": (curses.COLOR_WHITE, -1),
+                "popup_title": (curses.COLOR_WHITE, curses.COLOR_BLUE),
+            }
         self.colors = {}
         for index, (name, (fg, bg)) in enumerate(palette.items(), start=1):
             try:
@@ -639,7 +660,7 @@ class CursesMonitor:
             " 方向键 / j k 移动  PgUp/PgDn 翻页  Home/End 跳转  Enter 聚焦  t 打开追踪窗口 ",
             self._color("muted"),
         )
-        self._draw_line(height - 1, 0, width, f" 状态：{self.status_message} ", self._color("border"))
+        self._draw_line(height - 1, 0, width, f" 状态：{self.status_message} ", self._color("status"))
         self.stdscr.refresh()
 
     def _prompt(self, prompt: str, initial: str = "") -> str | None:
