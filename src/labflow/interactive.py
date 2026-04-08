@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import csv
 import curses
-import os
 import re
-import textwrap
+import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -70,6 +69,38 @@ def sanitize_filename(value: str) -> str:
     return sanitized or "user"
 
 
+def _char_display_width(char: str) -> int:
+    if not char:
+        return 0
+    if unicodedata.combining(char):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+
+
+def _display_width(text: str) -> int:
+    return sum(_char_display_width(char) for char in text)
+
+
+def _trim_to_width(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    current = 0
+    pieces: list[str] = []
+    for char in text:
+        char_width = _char_display_width(char)
+        if current + char_width > width:
+            break
+        pieces.append(char)
+        current += char_width
+    return "".join(pieces)
+
+
+def _fit_display(text: str, width: int) -> str:
+    trimmed = _trim_to_width(text, width)
+    padding = max(width - _display_width(trimmed), 0)
+    return trimmed + (" " * padding)
+
+
 def _command_source_label(source: str) -> str:
     labels = {
         "bash_history": "bash",
@@ -99,6 +130,14 @@ def _format_command_event_line(event: dict[str, object], show_source: bool = Tru
         source = _command_source_label(str(event.get("source") or "history"))
         return f"{prefix} [{source}] {command}"
     return f"{prefix}  {command}"
+
+
+def _format_recent_command_brief(event: dict[str, object], show_source: bool = False) -> str:
+    command = str(event.get("command") or "(unknown)")
+    if show_source:
+        source = _command_source_label(str(event.get("source") or "history"))
+        return f"[{source}] {command}"
+    return command
 
 
 def _recent_command_title(rows: list[dict[str, object]], notes: list[str]) -> str:
@@ -137,8 +176,13 @@ def _wrap_lines(lines: list[str], width: int) -> list[str]:
         if not line:
             wrapped.append("")
             continue
-        pieces = textwrap.wrap(line, width=max_width, replace_whitespace=False, drop_whitespace=False)
-        wrapped.extend(pieces or [""])
+        remaining = line
+        while remaining:
+            piece = _trim_to_width(remaining, max_width)
+            if not piece:
+                break
+            wrapped.append(piece)
+            remaining = remaining[len(piece) :]
     return wrapped
 
 
@@ -299,7 +343,6 @@ class CursesMonitor:
         if row is None:
             return [], []
         uid = int(row["uid"])
-        viewer_uid = int(os.environ.get("SUDO_UID") or os.getuid())
         if uid not in self.command_cache:
             events, notes = load_recent_commands(
                 login_name=str(row["login_name"]),
@@ -307,7 +350,7 @@ class CursesMonitor:
                 target_uid=uid,
                 timezone_name=self.db.config.timezone,
                 limit=max(limit, 1),
-                prefer_audit=(uid != viewer_uid),
+                prefer_audit=False,
             )
             self.command_cache[uid] = [
                 {
@@ -378,7 +421,8 @@ class CursesMonitor:
         if width <= 0 or y < 0:
             return
         try:
-            self.stdscr.addnstr(y, x, text.ljust(width), width, attr)
+            fitted = _fit_display(text, width)
+            self.stdscr.addstr(y, x, fitted, attr)
         except curses.error:
             pass
 
@@ -447,9 +491,8 @@ class CursesMonitor:
         rank_text = f"{int(row['rank']):>4}"
         total_text = f"{format_bytes(int(row['total_bytes'])):>12}"
         name_width = max(content_width - 4 - 2 - 12 - 2, 6)
-        name_text = str(row["display_name"])[:name_width].ljust(name_width)
         self._draw_line(y, 2, 4, rank_text, attr)
-        self._draw_line(y, 8, name_width, name_text, attr)
+        self._draw_line(y, 8, name_width, str(row["display_name"]), attr)
         self._draw_line(y, 8 + name_width + 2, 12, total_text, attr)
 
     def _draw(self) -> None:
@@ -473,7 +516,7 @@ class CursesMonitor:
             1,
             0,
             width,
-            f" 筛选：{query_text}  |  / 搜索  c 清空  m 月份  t 追踪  e 导出排行  u 导出历史  r 刷新  q 退出 ",
+            f" 筛选：{query_text}  |  / 搜索  c 清空  m 月份  t 峰值命令  e 导出排行  u 导出历史  r 刷新  q 退出 ",
             self._color("shortcuts"),
         )
 
@@ -537,16 +580,16 @@ class CursesMonitor:
                         f"{format_bytes(int(sample_row['total_bytes']))} "
                         f"(rx {format_bytes(int(sample_row['rx_bytes']))}, tx {format_bytes(int(sample_row['tx_bytes']))})"
                     )
+                detail_lines.append("按 t 查看“最大峰值”附近的命令")
             else:
                 detail_lines.append("这个月还没有记录到峰值样本")
 
             command_rows, command_notes = self._recent_commands_for_selected(limit=5)
-            command_title = _recent_command_title(command_rows, command_notes)
             command_show_source = _should_show_command_source(command_rows)
-            detail_lines.extend(["", f"{command_title}："])
+            detail_lines.extend(["", "最近敲过的命令："])
             if command_rows:
                 for command_row in command_rows:
-                    detail_lines.append(_format_command_event_line(command_row, show_source=command_show_source))
+                    detail_lines.append(_format_recent_command_brief(command_row, show_source=command_show_source))
             else:
                 fallback = _humanize_command_note(command_notes, has_rows=False)
                 detail_lines.append(fallback or "暂时没有可显示的最近命令")

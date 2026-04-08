@@ -341,6 +341,8 @@ def _is_background_command(event: CommandEvent | str) -> bool:
         "sed -n s/^cpu",
         "ps -ax -o ",
         "/usr/bin/ps -ax -o ",
+        "ps -HewO lstart ex",
+        "bash -c ps -HewO lstart ex",
         "/bin/sh -c /usr/bin/ps -ax -o ",
         "/bin/sh -c which ps",
         "/bin/sh /usr/bin/which ps",
@@ -353,6 +355,12 @@ def _is_background_command(event: CommandEvent | str) -> bool:
     if command.startswith(noisy_prefixes):
         return True
     if "finalshell_separator" in command:
+        return True
+    if "from labflow.forensics import load_recent_commands" in command:
+        return True
+    if command.startswith("/usr/sbin/ausearch "):
+        return True
+    if command == "env":
         return True
     if ".trae-server" in command and ("cpuUsage.sh" in command or "which ps" in command):
         return True
