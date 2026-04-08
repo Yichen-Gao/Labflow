@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+
+labflow.json
+DEPLOY_THIS_SERVER.md
+scripts/
+var/
+contrib/systemd/generated/

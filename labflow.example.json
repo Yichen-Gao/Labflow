@@ -1,0 +1,26 @@
+{
+  "data_root": "/datas",
+  "db_path": "/datas/gaoyichen/workspace/labflow/var/labflow.db",
+  "table_name": "labflow",
+  "external_interfaces": ["eth0"],
+  "timezone": "Asia/Shanghai",
+  "total_monthly_quota_gb": 90,
+  "user_soft_limit_gb": 20,
+  "skip_hidden_dirs": true,
+  "exclude_dirs": [
+    "datasets",
+    "shared_datasets",
+    "models",
+    "model",
+    "software",
+    "lost+found"
+  ],
+  "extra_users": [
+    {
+      "uid": 0,
+      "login_name": "root",
+      "display_name": "root",
+      "data_dir": "/root"
+    }
+  ]
+}
