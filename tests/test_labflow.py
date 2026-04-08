@@ -29,7 +29,7 @@ from labflow.interactive import (
     sanitize_filename,
 )
 from labflow.nftables import build_rules, parse_counter_listing
-from labflow.systemd_assets import parse_default_interface
+from labflow.systemd_assets import parse_default_interface, write_systemd_assets
 
 
 class LabflowTests(unittest.TestCase):
@@ -110,6 +110,23 @@ class LabflowTests(unittest.TestCase):
     def test_parse_default_interface(self) -> None:
         route_output = "default via 219.216.65.254 dev ens2f2 proto dhcp metric 100\n"
         self.assertEqual("ens2f2", parse_default_interface(route_output))
+
+    def test_write_systemd_assets_root_installer_uses_generated_scripts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "generated"
+            config_path = root / "labflow.json"
+            config_path.write_text("{}", encoding="utf-8")
+            write_systemd_assets(
+                project_dir=root,
+                config_path=config_path,
+                python_bin="/usr/bin/python3",
+                output_dir=output_dir,
+            )
+            install_script = (output_dir / "install-systemd-root.sh").read_text(encoding="utf-8")
+            self.assertIn(str(output_dir / "run-refresh.sh"), install_script)
+            self.assertIn(str(output_dir / "run-collect.sh"), install_script)
+            self.assertNotIn(str(root / "scripts" / "run-refresh.sh"), install_script)
 
     def test_write_report_csv(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

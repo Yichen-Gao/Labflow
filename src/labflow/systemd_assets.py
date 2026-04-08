@@ -75,7 +75,7 @@ def _timer_text(description: str, cadence: str, unit_name: str) -> str:
     )
 
 
-def _root_install_script_text(project_dir: Path, generated_dir: Path) -> str:
+def _root_install_script_text(generated_dir: Path) -> str:
     return textwrap.dedent(
         f"""\
         #!/usr/bin/env bash
@@ -91,8 +91,8 @@ def _root_install_script_text(project_dir: Path, generated_dir: Path) -> str:
         install -m 0644 {generated_dir / 'labflow-refresh.timer'} /etc/systemd/system/labflow-refresh.timer
 
         systemctl daemon-reload
-        {project_dir / 'scripts' / 'run-refresh.sh'}
-        {project_dir / 'scripts' / 'run-collect.sh'}
+        {generated_dir / 'run-refresh.sh'}
+        {generated_dir / 'run-collect.sh'}
         systemctl enable --now labflow-refresh.timer
         systemctl enable --now labflow-collect.timer
         echo "labflow timers installed and started."
@@ -149,7 +149,7 @@ def write_systemd_assets(
         encoding="utf-8",
     )
     root_install_script.write_text(
-        _root_install_script_text(project_dir, output_dir.resolve()),
+        _root_install_script_text(output_dir.resolve()),
         encoding="utf-8",
     )
     root_install_script.chmod(0o755)
