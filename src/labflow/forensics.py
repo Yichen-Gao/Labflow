@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -292,9 +292,13 @@ def _load_recent_audit_events(
     target_uid: int,
     timezone_name: str,
     limit: int,
+    lookback_minutes: int = 240,
 ) -> tuple[list[CommandEvent], list[str]]:
     notes: list[str] = []
-    lines, ausearch_notes = _run_ausearch(target_uid=target_uid, start=None, end=None)
+    tz = ZoneInfo(timezone_name)
+    end = datetime.now(tz)
+    start = end - timedelta(minutes=max(lookback_minutes, 1))
+    lines, ausearch_notes = _run_ausearch(target_uid=target_uid, start=start, end=end)
     notes.extend(ausearch_notes)
     if lines:
         all_events = parse_audit_exec_events_all(lines, target_uid=target_uid, timezone_name=timezone_name)
@@ -496,6 +500,7 @@ def load_recent_commands(
             target_uid=target_uid,
             timezone_name=timezone_name,
             limit=max(limit * 3, 10),
+            lookback_minutes=180,
         )
         notes.extend(audit_notes)
 

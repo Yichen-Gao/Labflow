@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import curses
+import os
 import re
 import textwrap
 from datetime import datetime, timedelta
@@ -298,6 +299,7 @@ class CursesMonitor:
         if row is None:
             return [], []
         uid = int(row["uid"])
+        viewer_uid = int(os.environ.get("SUDO_UID") or os.getuid())
         if uid not in self.command_cache:
             events, notes = load_recent_commands(
                 login_name=str(row["login_name"]),
@@ -305,7 +307,7 @@ class CursesMonitor:
                 target_uid=uid,
                 timezone_name=self.db.config.timezone,
                 limit=max(limit, 1),
-                prefer_audit=False,
+                prefer_audit=(uid != viewer_uid),
             )
             self.command_cache[uid] = [
                 {
@@ -395,6 +397,7 @@ class CursesMonitor:
             "border": (curses.COLOR_CYAN, -1),
             "pane_title": (curses.COLOR_GREEN, -1),
             "selected": (curses.COLOR_BLACK, curses.COLOR_GREEN),
+            "row_alt": (curses.COLOR_CYAN, -1),
             "muted": (curses.COLOR_BLUE, -1),
             "accent": (curses.COLOR_MAGENTA, -1),
             "value": (curses.COLOR_GREEN, -1),
@@ -432,6 +435,22 @@ class CursesMonitor:
             pass
         if title:
             self._draw_line(y, x + 2, max(width - 4, 0), f" {title} ", attr | curses.A_BOLD)
+
+    def _draw_user_row(self, y: int, width: int, row: dict[str, object], selected: bool, zebra: bool) -> None:
+        content_width = max(width - 4, 8)
+        attr = 0
+        if selected:
+            attr = self._color("selected", curses.A_BOLD)
+        elif zebra:
+            attr = self._color("row_alt")
+        self._draw_line(y, 2, content_width, " " * content_width, attr)
+        rank_text = f"{int(row['rank']):>4}"
+        total_text = f"{format_bytes(int(row['total_bytes'])):>12}"
+        name_width = max(content_width - 4 - 2 - 12 - 2, 6)
+        name_text = str(row["display_name"])[:name_width].ljust(name_width)
+        self._draw_line(y, 2, 4, rank_text, attr)
+        self._draw_line(y, 8, name_width, name_text, attr)
+        self._draw_line(y, 8 + name_width + 2, 12, total_text, attr)
 
     def _draw(self) -> None:
         self.stdscr.erase()
@@ -485,12 +504,13 @@ class CursesMonitor:
                 if row_index >= len(self.filtered_rows):
                     break
                 row = self.filtered_rows[row_index]
-                attr = self._color("selected", curses.A_BOLD) if row_index == self.selected else 0
-                label = (
-                    f"{int(row['rank']):>4}  {str(row['display_name'])[:20]:<20} "
-                    f"{format_bytes(int(row['total_bytes'])):>12}"
+                self._draw_user_row(
+                    pane_top + 2 + index,
+                    left_width,
+                    row,
+                    selected=(row_index == self.selected),
+                    zebra=(row_index % 2 == 1),
                 )
-                self._draw_line(pane_top + 2 + index, 2, left_width - 4, label, attr)
 
         selected = self._selected_row()
         if selected is None:
