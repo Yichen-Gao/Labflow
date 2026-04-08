@@ -182,6 +182,16 @@ class LabflowTests(unittest.TestCase):
         self.assertEqual("/datas/wuxi/project", parsed[0].cwd)
         self.assertEqual(222, parsed[0].pid)
 
+    def test_parse_audit_exec_events_decodes_hex_arguments(self) -> None:
+        lines = [
+            'type=SYSCALL msg=audit(1775638895.000:421): arch=c000003e syscall=59 success=yes exit=0 ppid=111 pid=223 auid=952 uid=952 gid=952 euid=952 suid=952 fsuid=952 tty=pts0 ses=7 comm="sh" exe="/bin/sh" key="labflow-exec"',
+            'type=EXECVE msg=audit(1775638895.000:421): argc=3 a0="/bin/sh" a1="-c" a2="6C73202D6C202F64617461732F77757869"',
+        ]
+        start = datetime(2026, 4, 8, 17, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        end = datetime(2026, 4, 8, 17, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+        parsed = parse_audit_exec_events(lines, target_uid=952, start=start, end=end, timezone_name="Asia/Shanghai")
+        self.assertEqual("/bin/sh -c ls -l /datas/wuxi", parsed[0].command)
+
     def test_parse_bash_history_with_timestamps(self) -> None:
         text = "\n".join(
             [
@@ -210,8 +220,9 @@ class LabflowTests(unittest.TestCase):
             CommandEvent(ts=datetime(2026, 4, 8, 17, 3, tzinfo=ZoneInfo("Asia/Shanghai")), source="bash_history", command="python train.py"),
             CommandEvent(ts=None, source="bash_history", command="cat log.txt"),
         ]
-        with patch("labflow.forensics._load_shell_history_events", return_value=(events, [], True, True)):
-            recent, notes = load_recent_commands("wuxi", "/datas/wuxi", "Asia/Shanghai", limit=2)
+        with patch("labflow.forensics._load_recent_audit_events", return_value=([], [])):
+            with patch("labflow.forensics._load_shell_history_events", return_value=(events, [], True, True)):
+                recent, notes = load_recent_commands("wuxi", "/datas/wuxi", 952, "Asia/Shanghai", limit=2)
         self.assertEqual(["python train.py", "ls"], [item.command for item in recent])
         self.assertEqual([], notes)
 
@@ -223,10 +234,24 @@ class LabflowTests(unittest.TestCase):
             CommandEvent(ts=None, source="bash_history", command="tail -f train.log"),
             CommandEvent(ts=None, source="bash_history", command="python eval.py"),
         ]
-        with patch("labflow.forensics._load_shell_history_events", return_value=(events, [], True, True)):
-            recent, notes = load_recent_commands("wuxi", "/datas/wuxi", "Asia/Shanghai", limit=2)
+        with patch("labflow.forensics._load_recent_audit_events", return_value=([], [])):
+            with patch("labflow.forensics._load_shell_history_events", return_value=(events, [], True, True)):
+                recent, notes = load_recent_commands("wuxi", "/datas/wuxi", 952, "Asia/Shanghai", limit=2)
         self.assertEqual(["python eval.py", "tail -f train.log"], [item.command for item in recent])
         self.assertTrue(any("无时间戳" in note for note in notes))
+
+    def test_load_recent_commands_filters_background_audit_noise(self) -> None:
+        from unittest.mock import patch
+
+        audit_events = [
+            CommandEvent(ts=datetime(2026, 4, 8, 19, 7, tzinfo=ZoneInfo("Asia/Shanghai")), source="auditd", command="cat /proc/123/stat"),
+            CommandEvent(ts=datetime(2026, 4, 8, 19, 6, tzinfo=ZoneInfo("Asia/Shanghai")), source="auditd", command="python train.py"),
+        ]
+        with patch("labflow.forensics._load_recent_audit_events", return_value=(audit_events, [])):
+            with patch("labflow.forensics._load_shell_history_events", return_value=([], [], False, False)):
+                recent, notes = load_recent_commands("wuxi", "/datas/wuxi", 952, "Asia/Shanghai", limit=2)
+        self.assertEqual(["python train.py"], [item.command for item in recent])
+        self.assertEqual([], notes)
 
 
 if __name__ == "__main__":

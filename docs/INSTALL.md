@@ -138,6 +138,8 @@ lab monitor
 sudo lab monitor
 ```
 
+启用 `auditd` 后，`lab monitor` 里按 `t` 还能打开追踪窗口，查看峰值附近的命令明细。
+
 如果你暂时不想开界面，也可以先看文本报表：
 
 ```bash

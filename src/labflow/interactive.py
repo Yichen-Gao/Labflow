@@ -3,11 +3,12 @@ from __future__ import annotations
 import csv
 import curses
 import re
-from datetime import datetime
+import textwrap
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .db import Database
-from .forensics import load_recent_commands
+from .forensics import load_command_events, load_recent_commands
 from .utils import format_bytes
 
 try:
@@ -78,16 +79,66 @@ def _command_source_label(source: str) -> str:
     return labels.get(source, source)
 
 
-def _format_command_event_line(event: dict[str, object]) -> str:
+def _should_show_command_source(rows: list[dict[str, object]]) -> bool:
+    normalized = {_command_source_label(str(row.get("source") or "")) for row in rows}
+    normalized.discard("")
+    return len(normalized) > 1 or ("audit" in normalized)
+
+
+def _format_command_event_line(event: dict[str, object], show_source: bool = True) -> str:
     timestamp = event.get("ts")
     if isinstance(timestamp, datetime):
         prefix = timestamp.strftime("%m-%d %H:%M")
     elif isinstance(timestamp, str) and timestamp:
         prefix = timestamp[5:16].replace("T", " ")
     else:
-        prefix = "recent"
-    source = _command_source_label(str(event.get("source") or "history"))
-    return f"{prefix} [{source}] {event.get('command') or '(unknown)'}"
+        prefix = "未记时"
+    command = str(event.get("command") or "(unknown)")
+    if show_source:
+        source = _command_source_label(str(event.get("source") or "history"))
+        return f"{prefix} [{source}] {command}"
+    return f"{prefix}  {command}"
+
+
+def _recent_command_title(rows: list[dict[str, object]], notes: list[str]) -> str:
+    if any("无时间戳" in note for note in notes):
+        return "最近命令（无时间戳，按近似顺序）"
+    if rows and any(str(row.get("source") or "") == "auditd" for row in rows):
+        return "最近命令（含精确时间）"
+    if any("需要 root" in note or "建议用 sudo" in note for note in notes):
+        return "最近命令（建议用 sudo 打开）"
+    return "最近命令"
+
+
+def _humanize_command_note(notes: list[str], has_rows: bool) -> str | None:
+    for note in notes:
+        if "需要 root" in note or "建议用 sudo" in note:
+            return "想看其他用户命令，建议用 sudo 打开"
+    if not has_rows:
+        for note in notes:
+            if "auditd" in note:
+                return "暂时还没有可用的审计记录"
+            if "shell history 不可读" in note:
+                return "当前权限读不到这个用户的 history"
+    return None
+
+
+def _format_sample_time(value: object) -> str:
+    if isinstance(value, str) and "T" in value:
+        return value[5:16].replace("T", " ")
+    return str(value)
+
+
+def _wrap_lines(lines: list[str], width: int) -> list[str]:
+    wrapped: list[str] = []
+    max_width = max(width, 8)
+    for line in lines:
+        if not line:
+            wrapped.append("")
+            continue
+        pieces = textwrap.wrap(line, width=max_width, replace_whitespace=False, drop_whitespace=False)
+        wrapped.extend(pieces or [""])
+    return wrapped
 
 
 def build_monitor_rows(db: Database, month: str) -> tuple[list[dict[str, object]], int]:
@@ -194,6 +245,8 @@ class CursesMonitor:
         self.sample_cache: dict[int, list[dict[str, object]]] = {}
         self.command_cache: dict[int, list[dict[str, object]]] = {}
         self.command_notes_cache: dict[int, list[str]] = {}
+        self.trace_cache: dict[tuple[int, str], tuple[list[dict[str, object]], list[str], datetime, datetime]] = {}
+        self.colors: dict[str, int] = {}
         self.stdscr = None
 
     def refresh(self) -> None:
@@ -202,6 +255,7 @@ class CursesMonitor:
         self.sample_cache.clear()
         self.command_cache.clear()
         self.command_notes_cache.clear()
+        self.trace_cache.clear()
         self._apply_filter()
 
     def _apply_filter(self) -> None:
@@ -248,6 +302,7 @@ class CursesMonitor:
             events, notes = load_recent_commands(
                 login_name=str(row["login_name"]),
                 data_dir=None if row["data_dir"] is None else str(row["data_dir"]),
+                target_uid=uid,
                 timezone_name=self.db.config.timezone,
                 limit=max(limit, 1),
             )
@@ -263,6 +318,42 @@ class CursesMonitor:
             self.command_notes_cache[uid] = list(notes)
         return self.command_cache[uid][: max(limit, 1)], self.command_notes_cache.get(uid, [])
 
+    def _trace_for_sample(self, sample_row: dict[str, object], window_minutes: int = 20) -> tuple[list[dict[str, object]], list[str], datetime, datetime]:
+        selected = self._selected_row()
+        if selected is None:
+            now = datetime.now()
+            return [], [], now, now
+        cache_key = (int(selected["uid"]), str(sample_row["ts"]))
+        if cache_key not in self.trace_cache:
+            center = datetime.fromisoformat(str(sample_row["ts"]))
+            window = timedelta(minutes=max(window_minutes, 1))
+            start = center - window
+            end = center + window
+            events, notes = load_command_events(
+                login_name=str(selected["login_name"]),
+                data_dir=None if selected["data_dir"] is None else str(selected["data_dir"]),
+                target_uid=int(selected["uid"]),
+                start=start,
+                end=end,
+                timezone_name=self.db.config.timezone,
+            )
+            self.trace_cache[cache_key] = (
+                [
+                    {
+                        "ts": event.ts,
+                        "source": event.source,
+                        "command": event.command,
+                        "cwd": event.cwd,
+                        "pid": event.pid,
+                    }
+                    for event in events
+                ],
+                list(notes),
+                start,
+                end,
+            )
+        return self.trace_cache[cache_key]
+
     def _set_status(self, message: str) -> None:
         self.status_message = message
 
@@ -272,7 +363,7 @@ class CursesMonitor:
         self.selected = max(0, min(self.selected + delta, len(self.filtered_rows) - 1))
 
     def _visible_list_height(self, height: int) -> int:
-        return max(height - 6, 3)
+        return max(height - 9, 3)
 
     def _ensure_visible(self, visible_height: int) -> None:
         if self.selected < self.scroll_offset:
@@ -288,12 +379,65 @@ class CursesMonitor:
         except curses.error:
             pass
 
+    def _init_colors(self) -> None:
+        if not curses.has_colors():
+            self.colors = {}
+            return
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+        except curses.error:
+            pass
+        palette = {
+            "title": (curses.COLOR_BLACK, curses.COLOR_CYAN),
+            "shortcuts": (curses.COLOR_BLACK, curses.COLOR_YELLOW),
+            "border": (curses.COLOR_CYAN, -1),
+            "pane_title": (curses.COLOR_GREEN, -1),
+            "selected": (curses.COLOR_BLACK, curses.COLOR_GREEN),
+            "muted": (curses.COLOR_BLUE, -1),
+            "accent": (curses.COLOR_MAGENTA, -1),
+            "value": (curses.COLOR_GREEN, -1),
+            "warning": (curses.COLOR_YELLOW, -1),
+            "popup": (curses.COLOR_BLACK, curses.COLOR_WHITE),
+            "popup_title": (curses.COLOR_BLACK, curses.COLOR_MAGENTA),
+        }
+        self.colors = {}
+        for index, (name, (fg, bg)) in enumerate(palette.items(), start=1):
+            try:
+                curses.init_pair(index, fg, bg)
+                self.colors[name] = curses.color_pair(index)
+            except curses.error:
+                self.colors[name] = 0
+
+    def _color(self, name: str, extra: int = 0) -> int:
+        return self.colors.get(name, 0) | extra
+
+    def _draw_box(self, y: int, x: int, height: int, width: int, title: str, attr: int = 0) -> None:
+        if height < 3 or width < 4:
+            return
+        try:
+            self.stdscr.attron(attr)
+            self.stdscr.addch(y, x, curses.ACS_ULCORNER)
+            self.stdscr.hline(y, x + 1, curses.ACS_HLINE, width - 2)
+            self.stdscr.addch(y, x + width - 1, curses.ACS_URCORNER)
+            for row in range(y + 1, y + height - 1):
+                self.stdscr.addch(row, x, curses.ACS_VLINE)
+                self.stdscr.addch(row, x + width - 1, curses.ACS_VLINE)
+            self.stdscr.addch(y + height - 1, x, curses.ACS_LLCORNER)
+            self.stdscr.hline(y + height - 1, x + 1, curses.ACS_HLINE, width - 2)
+            self.stdscr.addch(y + height - 1, x + width - 1, curses.ACS_LRCORNER)
+            self.stdscr.attroff(attr)
+        except curses.error:
+            pass
+        if title:
+            self._draw_line(y, x + 2, max(width - 4, 0), f" {title} ", attr | curses.A_BOLD)
+
     def _draw(self) -> None:
         self.stdscr.erase()
         height, width = self.stdscr.getmaxyx()
-        if height < 16 or width < 80:
-            self._draw_line(0, 0, width, "Terminal too small for lab monitor. Resize to at least 80x16.", curses.A_BOLD)
-            self._draw_line(2, 0, width, "Press q to quit.")
+        if height < 18 or width < 88:
+            self._draw_line(0, 0, width, "窗口太小，建议至少调整到 88x18。", curses.A_BOLD)
+            self._draw_line(2, 0, width, "按 q 退出。")
             self.stdscr.refresh()
             return
 
@@ -301,81 +445,91 @@ class CursesMonitor:
             0,
             0,
             width,
-            f"lab monitor | month {self.month} | total {format_bytes(self.total_bytes)} | users {len(self.rows)}",
-            curses.A_BOLD,
+            f" Labflow 监控  |  月份 {self.month}  |  总流量 {format_bytes(self.total_bytes)}  |  用户 {len(self.rows)} ",
+            self._color("title", curses.A_BOLD),
         )
-        query_text = self.query if self.query else "(all users)"
+        query_text = self.query if self.query else "全部用户"
         self._draw_line(
             1,
             0,
             width,
-            f"Search: {query_text} | / search  c clear  m month  e export month  u export user  r refresh  q quit",
+            f" 筛选：{query_text}  |  / 搜索  c 清空  m 月份  t 追踪  e 导出排行  u 导出历史  r 刷新  q 退出 ",
+            self._color("shortcuts"),
         )
 
-        left_width = max(32, width // 2)
+        pane_top = 3
+        pane_height = height - 6
+        left_width = max(34, width * 2 // 5)
+        left_width = min(left_width, width - 38)
         right_x = left_width + 1
-        right_width = width - right_x - 1
-        visible_height = self._visible_list_height(height)
+        right_width = width - right_x
+        visible_height = max(pane_height - 3, 3)
         self._ensure_visible(visible_height)
 
-        self._draw_line(3, 0, left_width, "Rank  User                         Total", curses.A_UNDERLINE)
-        self._draw_line(3, right_x, right_width, "Selected user details", curses.A_UNDERLINE)
+        self._draw_box(pane_top, 0, pane_height, left_width, "用户排行", self._color("border"))
+        self._draw_box(pane_top, right_x, pane_height, right_width, "用户详情", self._color("border"))
+        self._draw_line(
+            pane_top + 1,
+            2,
+            left_width - 4,
+            "序号  用户                       总流量",
+            self._color("pane_title", curses.A_BOLD),
+        )
 
         if not self.filtered_rows:
-            self._draw_line(5, 0, left_width, "No users match the current filter.")
+            self._draw_line(pane_top + 3, 2, left_width - 4, "没有匹配当前筛选条件的用户。", self._color("warning"))
         else:
             for index in range(visible_height):
                 row_index = self.scroll_offset + index
                 if row_index >= len(self.filtered_rows):
                     break
                 row = self.filtered_rows[row_index]
-                attr = curses.A_REVERSE if row_index == self.selected else 0
+                attr = self._color("selected", curses.A_BOLD) if row_index == self.selected else 0
                 label = (
-                    f"{int(row['rank']):>4}  {str(row['display_name'])[:24]:<24} "
+                    f"{int(row['rank']):>4}  {str(row['display_name'])[:20]:<20} "
                     f"{format_bytes(int(row['total_bytes'])):>12}"
                 )
-                self._draw_line(4 + index, 0, left_width, label, attr)
+                self._draw_line(pane_top + 2 + index, 2, left_width - 4, label, attr)
 
         selected = self._selected_row()
         if selected is None:
-            self._draw_line(5, right_x, right_width, "No user selected.")
+            self._draw_line(pane_top + 3, right_x + 2, right_width - 4, "当前没有选中用户。", self._color("warning"))
         else:
             percent = (int(selected["total_bytes"]) / self.total_bytes * 100) if self.total_bytes else 0.0
-            detail_height = max(height - 6, 8)
+            detail_height = max(pane_height - 2, 8)
             detail_lines = [
-                f"Name: {selected['display_name']}",
-                f"Login: {selected['login_name']}  UID: {selected['uid']}  Rank: {selected['rank']}",
-                f"Path: {selected['data_dir'] or '-'}",
-                f"Month total: {format_bytes(int(selected['total_bytes']))} ({percent:.2f}%)",
-                f"RX: {format_bytes(int(selected['rx_bytes']))}",
-                f"TX: {format_bytes(int(selected['tx_bytes']))}",
+                f"姓名：{selected['display_name']}",
+                f"登录名：{selected['login_name']}   UID：{selected['uid']}   排名：{selected['rank']}",
+                f"目录：{selected['data_dir'] or '-'}",
+                f"本月总量：{format_bytes(int(selected['total_bytes']))}（占 {percent:.2f}%）",
+                f"接收：{format_bytes(int(selected['rx_bytes']))}",
+                f"发送：{format_bytes(int(selected['tx_bytes']))}",
             ]
 
             spike_rows = self._top_samples_for_selected(limit=3)
-            detail_lines.extend(["", "Top spikes this month:"])
+            detail_lines.extend(["", "本月峰值："])
             if spike_rows:
                 for sample_row in spike_rows:
                     detail_lines.append(
-                        f"{str(sample_row['ts'])[5:16].replace('T', ' ')}  "
+                        f"{_format_sample_time(sample_row['ts'])}  "
                         f"{format_bytes(int(sample_row['total_bytes']))} "
                         f"(rx {format_bytes(int(sample_row['rx_bytes']))}, tx {format_bytes(int(sample_row['tx_bytes']))})"
                     )
             else:
-                detail_lines.append("No sample spikes recorded yet")
+                detail_lines.append("这个月还没有记录到峰值样本")
 
             command_rows, command_notes = self._recent_commands_for_selected(limit=5)
-            detail_lines.extend(["", "Recent commands:"])
+            command_title = _recent_command_title(command_rows, command_notes)
+            command_show_source = _should_show_command_source(command_rows)
+            detail_lines.extend(["", f"{command_title}："])
             if command_rows:
                 for command_row in command_rows:
-                    detail_lines.append(_format_command_event_line(command_row))
+                    detail_lines.append(_format_command_event_line(command_row, show_source=command_show_source))
             else:
-                detail_lines.append("No recent command history available")
-            if command_notes:
-                detail_lines.append("")
-                for note in command_notes[:2]:
-                    detail_lines.append(f"Note: {note}")
+                fallback = _humanize_command_note(command_notes, has_rows=False)
+                detail_lines.append(fallback or "暂时没有可显示的最近命令")
 
-            detail_lines.extend(["", f"Recent {self.history_limit} months:"])
+            detail_lines.extend(["", f"最近 {self.history_limit} 个月："])
             history_rows = self._history_for_selected()
             history_room = max(detail_height - len(detail_lines), 2)
             if history_rows:
@@ -385,18 +539,26 @@ class CursesMonitor:
                         f"(rx {format_bytes(int(history_row['rx_bytes']))}, tx {format_bytes(int(history_row['tx_bytes']))})"
                     )
             else:
-                detail_lines.append("No history recorded yet")
+                detail_lines.append("这个月之前还没有历史记录")
 
             for offset, line in enumerate(detail_lines[:detail_height]):
-                self._draw_line(4 + offset, right_x, right_width, line)
+                attr = 0
+                if line.endswith("："):
+                    attr = self._color("pane_title", curses.A_BOLD)
+                elif "这个月之前还没有历史记录" in line or "暂时没有可显示的最近命令" in line:
+                    attr = self._color("muted")
+                elif "本月总量" in line or "接收：" in line or "发送：" in line:
+                    attr = self._color("value")
+                self._draw_line(pane_top + 1 + offset, right_x + 2, right_width - 4, line, attr)
 
         self._draw_line(
             height - 2,
             0,
             width,
-            "Arrows/j/k move  PgUp/PgDn scroll  Home/End jump  Enter keeps detail pane focused",
+            " 方向键 / j k 移动  PgUp/PgDn 翻页  Home/End 跳转  Enter 聚焦  t 打开追踪窗口 ",
+            self._color("muted"),
         )
-        self._draw_line(height - 1, 0, width, f"Status: {self.status_message}")
+        self._draw_line(height - 1, 0, width, f" 状态：{self.status_message} ", self._color("border"))
         self.stdscr.refresh()
 
     def _prompt(self, prompt: str, initial: str = "") -> str | None:
@@ -423,12 +585,12 @@ class CursesMonitor:
 
         filename = self.export_dir / f"usage-{self.month}.csv"
         _write_report_csv(self.filtered_rows or self.rows, self.month, str(filename))
-        self._set_status(f"Exported month CSV to {filename}")
+        self._set_status(f"已导出当月排行：{filename}")
 
     def _export_user_history(self) -> None:
         selected = self._selected_row()
         if selected is None:
-            self._set_status("No user selected")
+            self._set_status("当前没有选中用户")
             return
         filename = self.export_dir / (
             f"user-history-{sanitize_filename(str(selected['display_name']))}-{int(selected['uid'])}.csv"
@@ -440,42 +602,173 @@ class CursesMonitor:
             display_name=str(selected["display_name"]),
             output_path=filename,
         )
-        self._set_status(f"Exported user CSV to {filename}")
+        self._set_status(f"已导出该用户历史：{filename}")
 
     def _change_month(self) -> None:
-        result = self._prompt("Enter month YYYY-MM (Esc cancels): ", self.month)
+        result = self._prompt("输入月份 YYYY-MM（Esc 取消）：", self.month)
         if result is None:
-            self._set_status("Month change cancelled")
+            self._set_status("已取消切换月份")
             return
         if not MONTH_RE.match(result):
-            self._set_status("Invalid month format; use YYYY-MM")
+            self._set_status("月份格式不对，请用 YYYY-MM")
             return
         self.month = result
         self.selected = 0
         self.scroll_offset = 0
         self.refresh()
-        self._set_status(f"Switched to {self.month}")
+        self._set_status(f"已切换到 {self.month}")
 
     def _change_search(self) -> None:
-        result = self._prompt("Search user (Esc cancels): ", self.query)
+        result = self._prompt("输入用户名 / 显示名 / UID（Esc 取消）：", self.query)
         if result is None:
-            self._set_status("Search cancelled")
+            self._set_status("已取消搜索")
             return
         self.query = result
         self.selected = 0
         self.scroll_offset = 0
         self._apply_filter()
         if self.query:
-            self._set_status(f"Filtered by '{self.query}'")
+            self._set_status(f"已按“{self.query}”筛选")
         else:
-            self._set_status("Showing all users")
+            self._set_status("已恢复全部用户")
+
+    def _build_trace_lines(self, sample_index: int) -> tuple[list[str], int]:
+        selected = self._selected_row()
+        if selected is None:
+            return ["当前没有选中用户。"], 0
+
+        samples = self._top_samples_for_selected(limit=5)
+        if not samples:
+            return ["这个用户本月还没有峰值样本。"], 0
+
+        sample_index = max(0, min(sample_index, len(samples) - 1))
+        sample_row = samples[sample_index]
+        events, notes, start, end = self._trace_for_sample(sample_row, window_minutes=20)
+        show_source = _should_show_command_source(events)
+
+        lines = [
+            f"用户：{selected['display_name']}（{selected['login_name']} / uid={selected['uid']}）",
+            f"正在查看峰值 {sample_index + 1}/{len(samples)}：{_format_sample_time(sample_row['ts'])}",
+            f"峰值流量：{format_bytes(int(sample_row['total_bytes']))}  "
+            f"(接收 {format_bytes(int(sample_row['rx_bytes']))} / 发送 {format_bytes(int(sample_row['tx_bytes']))})",
+            f"追踪窗口：{start.strftime('%m-%d %H:%M:%S')} ~ {end.strftime('%m-%d %H:%M:%S')}",
+            "",
+            "本月峰值列表：",
+        ]
+        for index, row in enumerate(samples):
+            marker = ">" if index == sample_index else " "
+            lines.append(
+                f"{marker} {_format_sample_time(row['ts'])}  {format_bytes(int(row['total_bytes']))}  "
+                f"(接收 {format_bytes(int(row['rx_bytes']))} / 发送 {format_bytes(int(row['tx_bytes']))})"
+            )
+
+        lines.extend(["", "这个时间窗里的命令："])
+        if events:
+            for row in events[:20]:
+                line = _format_command_event_line(row, show_source=show_source)
+                if row.get("cwd"):
+                    line = f"{line}  @ {row['cwd']}"
+                lines.append(line)
+        else:
+            lines.append("这个时间窗里还没有能对齐上的命令记录。")
+
+        if notes:
+            lines.extend(["", "说明："])
+            lines.extend(f"- {note}" for note in notes[:3])
+        return lines, sample_index
+
+    def _show_trace_popup(self) -> None:
+        if self._selected_row() is None:
+            self._set_status("当前没有选中用户")
+            return
+        samples = self._top_samples_for_selected(limit=5)
+        if not samples:
+            self._set_status("这个用户本月还没有峰值样本")
+            return
+
+        sample_index = 0
+        scroll = 0
+        while True:
+            self._draw()
+            height, width = self.stdscr.getmaxyx()
+            popup_height = min(height - 4, 22)
+            popup_width = min(width - 6, 112)
+            popup_y = max((height - popup_height) // 2, 1)
+            popup_x = max((width - popup_width) // 2, 2)
+            visible_height = popup_height - 4
+
+            lines, sample_index = self._build_trace_lines(sample_index)
+            wrapped = _wrap_lines(lines, popup_width - 4)
+            scroll = min(scroll, max(len(wrapped) - visible_height, 0))
+
+            window = curses.newwin(popup_height, popup_width, popup_y, popup_x)
+            window.bkgd(" ", self._color("popup"))
+            window.erase()
+            window.box()
+            try:
+                window.addnstr(
+                    0,
+                    2,
+                    " 流量追踪 ",
+                    popup_width - 4,
+                    self._color("popup_title", curses.A_BOLD),
+                )
+            except curses.error:
+                pass
+            footer = "←/→ 切换峰值  ↑/↓ 滚动  r 重载  q 关闭"
+            try:
+                window.addnstr(
+                    popup_height - 1,
+                    2,
+                    footer.ljust(popup_width - 4),
+                    popup_width - 4,
+                    self._color("pane_title"),
+                )
+            except curses.error:
+                pass
+            for offset, line in enumerate(wrapped[scroll : scroll + visible_height]):
+                attr = 0
+                if line.endswith("："):
+                    attr = self._color("pane_title", curses.A_BOLD)
+                elif line.startswith("> "):
+                    attr = self._color("selected", curses.A_BOLD)
+                elif line.startswith("- "):
+                    attr = self._color("warning")
+                try:
+                    window.addnstr(1 + offset, 2, line.ljust(popup_width - 4), popup_width - 4, attr)
+                except curses.error:
+                    pass
+            window.refresh()
+
+            key = self.stdscr.getch()
+            if key in (ord("q"), 27, ord("t")):
+                self._set_status("已关闭追踪窗口")
+                return
+            if key in (curses.KEY_LEFT, ord("h")):
+                sample_index = max(sample_index - 1, 0)
+                scroll = 0
+                continue
+            if key in (curses.KEY_RIGHT, ord("l")):
+                sample_index = min(sample_index + 1, len(samples) - 1)
+                scroll = 0
+                continue
+            if key in (curses.KEY_UP, ord("k")):
+                scroll = max(scroll - 1, 0)
+                continue
+            if key in (curses.KEY_DOWN, ord("j")):
+                scroll = min(scroll + 1, max(len(wrapped) - visible_height, 0))
+                continue
+            if key in (ord("r"),):
+                self.trace_cache.clear()
+                continue
 
     def _main(self, stdscr) -> int:
         self.stdscr = stdscr
+        self._init_colors()
         curses.curs_set(0)
         stdscr.keypad(True)
         self.refresh()
-        self._set_status("Ready")
+        self._set_status("就绪")
         while True:
             self._draw()
             key = stdscr.getch()
@@ -508,10 +801,13 @@ class CursesMonitor:
                 self.selected = 0
                 self.scroll_offset = 0
                 self._apply_filter()
-                self._set_status("Cleared search")
+                self._set_status("已清空筛选")
                 continue
             if key in (ord("m"),):
                 self._change_month()
+                continue
+            if key in (ord("t"),):
+                self._show_trace_popup()
                 continue
             if key in (ord("e"),):
                 self._export_month_csv()
@@ -521,19 +817,18 @@ class CursesMonitor:
                 continue
             if key in (ord("r"),):
                 self.refresh()
-                self._set_status("Refreshed")
+                self._set_status("已刷新")
                 continue
             if key in (10, 13):
                 selected = self._selected_row()
                 if selected is None:
-                    self._set_status("No user selected")
+                    self._set_status("当前没有选中用户")
                 else:
                     self._set_status(
-                        f"{selected['display_name']} | total {format_bytes(int(selected['total_bytes']))} | "
-                        f"spikes, recent commands, and history shown on the right"
+                        f"{selected['display_name']}：右侧可看流量、峰值、最近命令和历史"
                     )
                 continue
-            self._set_status("Keys: arrows/jk, /, c, m, e, u, r, q")
+            self._set_status("可用按键：方向键/jk、/、c、m、t、e、u、r、q")
         return 0
 
     def run(self) -> int:

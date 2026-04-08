@@ -3,6 +3,8 @@ from __future__ import annotations
 import gzip
 import pwd
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,7 +35,27 @@ class CommandEvent:
 
 def _unquote(value: str) -> str:
     if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-        return bytes(value[1:-1], "utf-8").decode("unicode_escape")
+        value = bytes(value[1:-1], "utf-8").decode("unicode_escape")
+    return _maybe_decode_hex(value)
+
+
+def _maybe_decode_hex(value: str) -> str:
+    if len(value) < 8 or len(value) % 2 != 0:
+        return value
+    if any(ch not in "0123456789abcdefABCDEF" for ch in value):
+        return value
+    try:
+        decoded = bytes.fromhex(value)
+    except ValueError:
+        return value
+    if not decoded:
+        return value
+    text = decoded.decode("utf-8", errors="replace")
+    printable = sum(1 for char in text if char.isprintable() or char.isspace())
+    if printable / max(len(text), 1) < 0.9:
+        return value
+    if any(marker in text for marker in ("/", " ", ".", "-", "_")):
+        return text
     return value
 
 
@@ -221,6 +243,115 @@ def _read_text_maybe_gzip(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _ausearch_timestamp_parts(dt: datetime) -> tuple[str, str]:
+    local = dt.astimezone(dt.tzinfo or ZoneInfo("UTC"))
+    return local.strftime("%Y-%m-%d"), local.strftime("%H:%M:%S")
+
+
+def _run_ausearch(
+    target_uid: int,
+    start: datetime | None,
+    end: datetime | None,
+    key: str = "labflow-exec",
+) -> tuple[list[str], list[str]]:
+    ausearch_bin = shutil.which("ausearch")
+    if ausearch_bin is None:
+        return [], ["系统里没有 `ausearch`，无法直接读取 auditd 审计结果"]
+
+    command = [
+        ausearch_bin,
+        "--input-logs",
+        "--format",
+        "raw",
+        "-m",
+        "SYSCALL,EXECVE,CWD",
+        "-ui",
+        str(target_uid),
+    ]
+    if key:
+        command.extend(["-k", key])
+    if start is not None:
+        start_date, start_time = _ausearch_timestamp_parts(start)
+        command.extend(["-ts", start_date, start_time])
+    if end is not None:
+        end_date, end_time = _ausearch_timestamp_parts(end)
+        command.extend(["-te", end_date, end_time])
+
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    stdout = completed.stdout or ""
+    stderr = completed.stderr or ""
+    if completed.returncode not in (0, 1):
+        return [], [f"ausearch 执行失败：{stderr.strip() or f'退出码 {completed.returncode}'}"]
+    if "You must be root" in stderr or "Only root" in stderr:
+        return [], ["读取 auditd 审计结果需要 root 权限，建议用 sudo 打开"]
+    lines = stdout.splitlines()
+    return lines, []
+
+
+def _load_recent_audit_events(
+    target_uid: int,
+    timezone_name: str,
+    limit: int,
+) -> tuple[list[CommandEvent], list[str]]:
+    notes: list[str] = []
+    lines, ausearch_notes = _run_ausearch(target_uid=target_uid, start=None, end=None)
+    notes.extend(ausearch_notes)
+    if lines:
+        all_events = parse_audit_exec_events_all(lines, target_uid=target_uid, timezone_name=timezone_name)
+        if all_events:
+            return list(reversed(all_events))[: max(limit, 1)], notes
+
+    audit_paths = [path for path in sorted(Path("/var/log/audit").glob("audit.log*")) if path.is_file()]
+    if not audit_paths and not notes:
+        notes.append("未找到 auditd 审计日志")
+    events: list[CommandEvent] = []
+    for path in audit_paths:
+        try:
+            text = _read_text_maybe_gzip(path)
+        except PermissionError:
+            notes.append(f"auditd 日志不可读：{path}")
+            continue
+        events.extend(parse_audit_exec_events_all(text.splitlines(), target_uid=target_uid, timezone_name=timezone_name))
+    if events:
+        ordered = sorted(events, key=lambda item: item.ts or datetime.min.replace(tzinfo=ZoneInfo(timezone_name)), reverse=True)
+        return ordered[: max(limit, 1)], notes
+    return [], notes
+
+
+def _is_background_command(event: CommandEvent) -> bool:
+    command = event.command.strip()
+    if command in {"sleep 1", "grep socket:", "grep root", "ps -F -A -l", "trae-helper"}:
+        return True
+    noisy_prefixes = (
+        "cat /proc/",
+        "sed -n s/^cpu",
+        "ps -ax -o ",
+        "/usr/bin/ps -ax -o ",
+        "/bin/sh -c /usr/bin/ps -ax -o ",
+        "/bin/sh -c which ps",
+        "/bin/sh /usr/bin/which ps",
+        "/bin/sh -c ps -F -A -l | grep root",
+        "/bin/sh -c ls -l /proc/",
+        "kill -0 ",
+        "ls -l /proc/",
+    )
+    if command.startswith(noisy_prefixes):
+        return True
+    if ".trae-server" in command and ("cpuUsage.sh" in command or "which ps" in command):
+        return True
+    return False
+
+
+def parse_audit_exec_events_all(
+    lines: Iterable[str],
+    target_uid: int,
+    timezone_name: str,
+) -> list[CommandEvent]:
+    start = datetime.min.replace(tzinfo=ZoneInfo(timezone_name))
+    end = datetime.max.replace(tzinfo=ZoneInfo(timezone_name))
+    return parse_audit_exec_events(lines, target_uid=target_uid, start=start, end=end, timezone_name=timezone_name)
+
+
 def _load_shell_history_events(
     login_name: str,
     data_dir: str | None,
@@ -270,29 +401,42 @@ def load_command_events(
     events: list[CommandEvent] = []
     notes: list[str] = []
 
-    audit_paths = [path for path in sorted(Path("/var/log/audit").glob("audit.log*")) if path.is_file()]
-    if audit_paths:
-        audit_loaded = False
-        for path in audit_paths:
-            try:
-                text = _read_text_maybe_gzip(path)
-            except PermissionError:
-                notes.append(f"auditd 日志不可读：{path}")
-                continue
-            audit_loaded = True
-            events.extend(
-                parse_audit_exec_events(
-                    text.splitlines(),
-                    target_uid=target_uid,
-                    start=start,
-                    end=end,
-                    timezone_name=timezone_name,
-                )
+    ausearch_lines, ausearch_notes = _run_ausearch(target_uid=target_uid, start=start, end=end)
+    notes.extend(ausearch_notes)
+    if ausearch_lines:
+        events.extend(
+            parse_audit_exec_events(
+                ausearch_lines,
+                target_uid=target_uid,
+                start=start,
+                end=end,
+                timezone_name=timezone_name,
             )
-        if not audit_loaded:
-            notes.append("找到 auditd 日志路径，但当前权限不足，建议用 sudo 运行 trace")
-    else:
-        notes.append("未找到 auditd 日志；如果想精确关联命令，建议安装并开启 auditd execve 审计")
+        )
+    elif not ausearch_notes:
+        audit_paths = [path for path in sorted(Path("/var/log/audit").glob("audit.log*")) if path.is_file()]
+        if audit_paths:
+            audit_loaded = False
+            for path in audit_paths:
+                try:
+                    text = _read_text_maybe_gzip(path)
+                except PermissionError:
+                    notes.append(f"auditd 日志不可读：{path}")
+                    continue
+                audit_loaded = True
+                events.extend(
+                    parse_audit_exec_events(
+                        text.splitlines(),
+                        target_uid=target_uid,
+                        start=start,
+                        end=end,
+                        timezone_name=timezone_name,
+                    )
+                )
+            if not audit_loaded:
+                notes.append("找到 auditd 日志路径，但当前权限不足，建议用 sudo 运行 trace")
+        else:
+            notes.append("未找到 auditd 审计结果；如果想精确关联命令，请确认 execve 规则已经启用")
 
     history_events, history_notes, history_events_found, undated_history_found = _load_shell_history_events(
         login_name=login_name,
@@ -327,29 +471,53 @@ def load_command_events(
 def load_recent_commands(
     login_name: str,
     data_dir: str | None,
+    target_uid: int,
     timezone_name: str,
     limit: int = 5,
 ) -> tuple[list[CommandEvent], list[str]]:
-    events, notes, history_found, undated_history_found = _load_shell_history_events(
+    notes: list[str] = []
+    audit_events, audit_notes = _load_recent_audit_events(
+        target_uid=target_uid,
+        timezone_name=timezone_name,
+        limit=max(limit * 3, 10),
+    )
+    notes.extend(audit_notes)
+
+    history_events, history_notes, history_found, undated_history_found = _load_shell_history_events(
         login_name=login_name,
         data_dir=data_dir,
         timezone_name=timezone_name,
     )
-    if not history_found:
-        if not notes:
-            notes.append("未找到可用的 shell history")
-        return [], notes
+    notes.extend(history_notes)
 
-    timestamped = [event for event in events if event.ts is not None]
-    if timestamped:
-        ordered = sorted(timestamped, key=lambda item: item.ts or datetime.min.replace(tzinfo=ZoneInfo(timezone_name)), reverse=True)
+    combined_timestamped = [event for event in audit_events]
+    combined_timestamped.extend(event for event in history_events if event.ts is not None)
+    if combined_timestamped:
+        unique: dict[tuple[datetime | None, str, str, int | None], CommandEvent] = {}
+        for event in combined_timestamped:
+            key = (event.ts, event.source, event.command, event.pid)
+            unique[key] = event
+        ordered = sorted(
+            unique.values(),
+            key=lambda item: item.ts or datetime.min.replace(tzinfo=ZoneInfo(timezone_name)),
+            reverse=True,
+        )
+        meaningful = [event for event in ordered if not _is_background_command(event)]
+        if meaningful:
+            return meaningful[: max(limit, 1)], notes
+        if history_found and undated_history_found:
+            fallback = list(reversed(history_events))
+            notes.append("审计里最近大多是后台工具命令，已改用无时间戳的 shell history 近似展示")
+            return fallback[: max(limit, 1)], notes
         return ordered[: max(limit, 1)], notes
 
-    if undated_history_found:
-        ordered = list(reversed(events))
+    if history_found and undated_history_found:
+        ordered = list(reversed(history_events))
         notes.append("以下命令来自无时间戳的 shell history，只能近似看作“最近执行过”")
         return ordered[: max(limit, 1)], notes
 
+    if not history_found and not audit_events and not notes:
+        notes.append("最近命令暂时不可用")
     return [], notes
 
 
