@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,6 +37,17 @@ class LabflowConfig:
     nft_binary: str = "nft"
     extra_users: tuple[ExtraUser, ...] = field(default_factory=tuple)
     user_overrides: tuple[UserOverride, ...] = field(default_factory=tuple)
+    daily_alert_gb: float | None = None
+    alert_email_to: tuple[str, ...] = field(default_factory=tuple)
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_password_env: str | None = None
+    smtp_from: str | None = None
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_subject_prefix: str = "[Labflow]"
 
     @property
     def total_monthly_quota_bytes(self) -> int | None:
@@ -48,6 +60,28 @@ class LabflowConfig:
         if self.user_soft_limit_gb is None:
             return None
         return int(self.user_soft_limit_gb * 1024**3)
+
+    @property
+    def daily_alert_bytes(self) -> int | None:
+        if self.daily_alert_gb is None:
+            return None
+        return int(self.daily_alert_gb * 1024**3)
+
+    @property
+    def smtp_password_resolved(self) -> str | None:
+        if self.smtp_password_env:
+            value = os.environ.get(self.smtp_password_env)
+            if value:
+                return value
+        return self.smtp_password
+
+    @property
+    def smtp_recipients(self) -> tuple[str, ...]:
+        if self.alert_email_to:
+            return self.alert_email_to
+        if self.smtp_from:
+            return (self.smtp_from,)
+        return tuple()
 
 
 def _parse_extra_users(items: list[dict[str, object]]) -> tuple[ExtraUser, ...]:
@@ -90,6 +124,16 @@ def _resolve_path(raw_value: str, base_dir: Path) -> Path:
     return path.resolve()
 
 
+def _parse_string_tuple(value: object) -> tuple[str, ...]:
+    if value is None:
+        return tuple()
+    if isinstance(value, str):
+        return tuple(item.strip() for item in value.split(",") if item.strip())
+    if isinstance(value, list):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    return tuple()
+
+
 def load_config(path: str | Path) -> LabflowConfig:
     config_path = Path(path).expanduser().resolve()
     base_dir = config_path.parent
@@ -116,4 +160,17 @@ def load_config(path: str | Path) -> LabflowConfig:
         nft_binary=str(raw.get("nft_binary", "nft")),
         extra_users=_parse_extra_users(list(raw.get("extra_users", []))),
         user_overrides=_parse_user_overrides(list(raw.get("user_overrides", []))),
+        daily_alert_gb=(
+            None if raw.get("daily_alert_gb") is None else float(raw["daily_alert_gb"])
+        ),
+        alert_email_to=_parse_string_tuple(raw.get("alert_email_to")),
+        smtp_host=None if raw.get("smtp_host") is None else str(raw["smtp_host"]),
+        smtp_port=int(raw.get("smtp_port", 587)),
+        smtp_username=None if raw.get("smtp_username") is None else str(raw["smtp_username"]),
+        smtp_password=None if raw.get("smtp_password") is None else str(raw["smtp_password"]),
+        smtp_password_env=None if raw.get("smtp_password_env") is None else str(raw["smtp_password_env"]),
+        smtp_from=None if raw.get("smtp_from") is None else str(raw["smtp_from"]),
+        smtp_use_tls=bool(raw.get("smtp_use_tls", True)),
+        smtp_use_ssl=bool(raw.get("smtp_use_ssl", False)),
+        smtp_subject_prefix=str(raw.get("smtp_subject_prefix", "[Labflow]")),
     )

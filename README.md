@@ -33,6 +33,7 @@
 - 按自然月聚合，历史月报自动保留，不需要手动清零
 - 提供 `report`、`top`、`history`、`export-csv`、`check-quota` 等命令
 - 提供 `trace` 命令，排查某个流量突增时段附近执行过什么命令
+- 支持“单日超过阈值自动发邮件”，适合盯异常用户
 - 提供全屏终端监控界面，支持方向键上下选择、搜索、导出和切换月份
 - 提供系统级 `lab` 启动命令，任何目录都能直接打开
 
@@ -80,6 +81,9 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 - `timezone`：例如 `Asia/Shanghai`
 - `total_monthly_quota_gb`：整机月额度
 - `user_soft_limit_gb`：单用户提醒阈值
+- `daily_alert_gb`：单日流量提醒阈值，例如 `2`
+- `alert_email_to`：告警收件人邮箱列表
+- `smtp_*`：SMTP 发信配置，建议把密码放进环境变量
 - `exclude_dirs`：共享目录排除列表
 
 建议把共享目录加入 `exclude_dirs`，例如：`datasets`、`shared_datasets`、`models`、`software`。
@@ -143,6 +147,7 @@ lab history wuxi
 lab trace wuxi
 lab export-csv --month 2026-04 --output usage-2026-04.csv
 lab check-quota
+lab check-alerts --dry-run
 ```
 
 默认展示按总流量从高到低排序。
@@ -194,6 +199,27 @@ lab trace wuxi --around 2026-04-08T17:01:35+08:00 --window-minutes 20
 ```bash
 lab export-csv --month 2026-04 --output usage-2026-04.csv
 ```
+
+### 想在一天内有人突然用太多时自动收到邮件
+
+先在 `labflow.json` 里配置：
+
+- `daily_alert_gb`
+- `alert_email_to`
+- `smtp_host`
+- `smtp_port`
+- `smtp_username`
+- `smtp_password_env`
+- `smtp_from`
+
+例如把密码放到环境变量里：
+
+```bash
+export LABFLOW_SMTP_PASSWORD='你的 SMTP 授权码'
+lab check-alerts --dry-run
+```
+
+`collect` 定时任务每次运行后都会顺手检查一次；如果某个用户“今天 00:00 到现在”累计超过阈值，就会自动发邮件，而且同一个用户同一天只发一次。
 
 ### 想确认定时任务是否正常运行
 

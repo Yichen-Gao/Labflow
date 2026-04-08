@@ -49,6 +49,9 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 - `timezone`：建议按服务器所在时区填写，例如 `Asia/Shanghai`
 - `total_monthly_quota_gb`：整机月总额度
 - `user_soft_limit_gb`：单用户提醒阈值
+- `daily_alert_gb`：单日异常流量提醒阈值，例如 `2`
+- `alert_email_to`：异常提醒收件邮箱
+- `smtp_*`：SMTP 发信配置，推荐把密码写到环境变量里
 - `exclude_dirs`：不参与身份识别的共享目录
 
 建议把这类共享目录放进 `exclude_dirs`：
@@ -147,6 +150,15 @@ lab report
 lab top --limit 10
 lab check-quota
 ```
+
+如果你还想在“某个用户一天内突然用到 2G”时自动收到邮件，可以再配置 `daily_alert_gb` 和 `smtp_*`，然后先手动试一次：
+
+```bash
+export LABFLOW_SMTP_PASSWORD='你的 SMTP 授权码'
+lab check-alerts --dry-run
+```
+
+后面定时执行的 `collect` 会自动附带检查，达到阈值就发邮件，同一个用户同一天只提醒一次。
 
 ## 可选：如果你还想排查“他当时跑了什么命令”
 

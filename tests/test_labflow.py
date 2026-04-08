@@ -8,6 +8,7 @@ from pathlib import Path
 import pwd
 from zoneinfo import ZoneInfo
 
+from labflow.alerts import check_daily_alerts
 from labflow.config import LabflowConfig
 from labflow.db import Database
 from labflow.discovery import discover_users
@@ -193,6 +194,26 @@ class LabflowTests(unittest.TestCase):
             self.assertEqual([1000, 1001], [row["uid"] for row in rows])
             self.assertEqual(0, rows[1]["total_bytes"])
 
+    def test_daily_alert_records_and_daily_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self.make_config(root, root / "labflow.db")
+            db = Database(config)
+            ts = datetime(2026, 4, 8, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+            db.sync_users(
+                [
+                    type("User", (), {"uid": 1000, "login_name": "alice", "display_name": "alice", "data_dir": "/datas/alice", "source": "datas"})(),
+                ],
+                ts,
+            )
+            db.apply_counter_snapshot(ts, {1000: {"rx": 1024, "tx": 2048}})
+            rows = db.daily_usage_between("2026-04-08T00:00:00+08:00", "2026-04-08T23:59:59+08:00")
+            self.assertEqual(1, len(rows))
+            self.assertEqual(3072, int(rows[0]["total_bytes"]))
+            self.assertFalse(db.has_daily_alert("2026-04-08", 1000, 2048))
+            db.record_daily_alert("2026-04-08", 1000, 2048, 3072, ts)
+            self.assertTrue(db.has_daily_alert("2026-04-08", 1000, 2048))
+
     def test_parse_audit_exec_events(self) -> None:
         lines = [
             'type=SYSCALL msg=audit(1775638895.000:420): arch=c000003e syscall=59 success=yes exit=0 ppid=111 pid=222 auid=952 uid=952 gid=952 euid=952 suid=952 fsuid=952 tty=pts0 ses=7 comm="python3" exe="/usr/bin/python3" key="labflow-exec"',
@@ -299,9 +320,45 @@ class LabflowTests(unittest.TestCase):
                     "Asia/Shanghai",
                     limit=2,
                     prefer_audit=False,
-                )
+        )
         self.assertEqual(["python train.py", "tail -f train.log"], [item.command for item in recent])
         self.assertEqual([], notes)
+
+    def test_check_daily_alerts_sends_once(self) -> None:
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = LabflowConfig(
+                data_root=root,
+                db_path=root / "labflow.db",
+                external_interfaces=("eth0",),
+                timezone="Asia/Shanghai",
+                daily_alert_gb=1 / 1024,
+                alert_email_to=("admin@example.com",),
+                smtp_host="smtp.example.com",
+                smtp_port=587,
+                smtp_username="bot@example.com",
+                smtp_password="secret",
+                smtp_from="bot@example.com",
+            )
+            db = Database(config)
+            ts = datetime(2026, 4, 8, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+            db.sync_users(
+                [
+                    type("User", (), {"uid": 1000, "login_name": "alice", "display_name": "alice", "data_dir": "/datas/alice", "source": "datas"})(),
+                ],
+                ts,
+            )
+            db.apply_counter_snapshot(ts, {1000: {"rx": 1024 * 1024, "tx": 0}})
+            with patch("labflow.alerts.send_smtp_email") as mocked_send:
+                messages = check_daily_alerts(config, db, ts)
+                self.assertEqual(1, len(messages))
+                self.assertEqual(1, mocked_send.call_count)
+                self.assertIn("alice", messages[0])
+                messages = check_daily_alerts(config, db, ts)
+                self.assertEqual([], messages)
+                self.assertEqual(1, mocked_send.call_count)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .alerts import check_daily_alerts
 from .config import load_config
 from .db import Database
 from .discovery import discover_users
@@ -41,6 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("render-rules", help="Print the nftables batch file")
     subparsers.add_parser("install-rules", help="Install nftables rules using the configured nft binary")
     subparsers.add_parser("collect", help="Read nft counters and persist usage deltas")
+    check_alerts = subparsers.add_parser("check-alerts", help="Evaluate daily traffic alerts and send email if needed")
+    check_alerts.add_argument("--dry-run", action="store_true", help="Preview alerts without sending email")
     subparsers.add_parser("detect-iface", help="Guess the default external interface from the routing table")
 
     write_systemd = subparsers.add_parser("write-systemd", help="Generate systemd units and helper scripts")
@@ -283,13 +286,32 @@ def handle_install_rules(args: argparse.Namespace) -> int:
 def handle_collect(args: argparse.Namespace) -> int:
     config, db = load_runtime(args.config)
     absolute = list_counters(config)
-    result = db.apply_counter_snapshot(now_in_timezone(config.timezone), absolute)
+    now = now_in_timezone(config.timezone)
+    result = db.apply_counter_snapshot(now, absolute)
     print(
         f"Collected month={result.month} users={result.processed_users} "
         f"rx_delta={format_bytes(result.delta_rx_bytes)} tx_delta={format_bytes(result.delta_tx_bytes)}"
     )
     if result.reset_counters:
         print("Detected counter resets: " + ", ".join(result.reset_counters))
+    try:
+        alert_messages = check_daily_alerts(config, db, now)
+    except Exception as exc:
+        print(f"WARN: daily alert check failed: {exc}", file=sys.stderr)
+    else:
+        for message in alert_messages:
+            print(message)
+    return 0
+
+
+def handle_check_alerts(args: argparse.Namespace) -> int:
+    config, db = load_runtime(args.config)
+    messages = check_daily_alerts(config, db, now_in_timezone(config.timezone), dry_run=args.dry_run)
+    if not messages:
+        print("No daily alerts triggered")
+        return 0
+    for message in messages:
+        print(message)
     return 0
 
 
@@ -568,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
         "render-rules": handle_render_rules,
         "install-rules": handle_install_rules,
         "collect": handle_collect,
+        "check-alerts": handle_check_alerts,
         "detect-iface": handle_detect_iface,
         "write-systemd": handle_write_systemd,
         "report": handle_report,

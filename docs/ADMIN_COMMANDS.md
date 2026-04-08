@@ -63,6 +63,12 @@ lab export-csv --month 2026-04 --output usage-2026-04.csv
 lab check-quota
 ```
 
+手动预演今天的邮件告警：
+
+```bash
+lab check-alerts --dry-run
+```
+
 ## `lab monitor` 里怎么操作
 
 如果你要看“别的用户最近执行过什么命令”，最好管理员直接运行：
@@ -118,6 +124,19 @@ lab trace <用户名> --around 2026-04-08T17:01:35+08:00 --window-minutes 20
 ```bash
 lab export-csv --month 2026-04 --output usage-2026-04.csv
 ```
+
+### 想在“某个人今天突然用了很多流量”时自动收到邮件？
+
+在 `labflow.json` 里配置 `daily_alert_gb`、`alert_email_to` 和 `smtp_*` 后，`collect` 定时任务每次运行都会自动检查。
+
+想先手动预演一次：
+
+```bash
+export LABFLOW_SMTP_PASSWORD='你的 SMTP 授权码'
+lab check-alerts --dry-run
+```
+
+达到阈值时，同一个用户同一天只会发一次提醒邮件。
 
 ## 服务和部署排查
 

@@ -46,8 +46,18 @@ CREATE TABLE IF NOT EXISTS counter_state (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS daily_alerts (
+    alert_date TEXT NOT NULL,
+    uid INTEGER NOT NULL,
+    threshold_bytes INTEGER NOT NULL,
+    observed_total_bytes INTEGER NOT NULL,
+    sent_at TEXT NOT NULL,
+    PRIMARY KEY (alert_date, uid, threshold_bytes)
+);
+
 CREATE INDEX IF NOT EXISTS idx_samples_month_uid ON samples(month, uid);
 CREATE INDEX IF NOT EXISTS idx_monthly_usage_month ON monthly_usage(month);
+CREATE INDEX IF NOT EXISTS idx_daily_alerts_date ON daily_alerts(alert_date);
 """
 
 
@@ -302,3 +312,74 @@ class Database:
                 """,
                 (uid, start_ts, end_ts, limit),
             ).fetchall()
+
+    def daily_usage_between(self, start_ts: str, end_ts: str) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT
+                    s.uid,
+                    COALESCE(u.login_name, printf('uid_%d', s.uid)) AS login_name,
+                    COALESCE(u.display_name, printf('uid_%d', s.uid)) AS display_name,
+                    u.data_dir,
+                    COALESCE(SUM(s.rx_bytes), 0) AS rx_bytes,
+                    COALESCE(SUM(s.tx_bytes), 0) AS tx_bytes,
+                    COALESCE(SUM(s.rx_bytes + s.tx_bytes), 0) AS total_bytes
+                FROM samples s
+                LEFT JOIN users u ON u.uid = s.uid
+                WHERE s.ts >= ? AND s.ts <= ?
+                GROUP BY s.uid, u.login_name, u.display_name, u.data_dir
+                ORDER BY total_bytes DESC, s.uid ASC
+                """,
+                (start_ts, end_ts),
+            ).fetchall()
+
+    def user_month_usage(self, uid: int, month: str) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT month, uid, rx_bytes, tx_bytes, (rx_bytes + tx_bytes) AS total_bytes
+                FROM monthly_usage
+                WHERE uid = ? AND month = ?
+                LIMIT 1
+                """,
+                (uid, month),
+            ).fetchone()
+
+    def has_daily_alert(self, alert_date: str, uid: int, threshold_bytes: int) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM daily_alerts
+                WHERE alert_date = ? AND uid = ? AND threshold_bytes = ?
+                LIMIT 1
+                """,
+                (alert_date, uid, threshold_bytes),
+            ).fetchone()
+            return row is not None
+
+    def record_daily_alert(
+        self,
+        alert_date: str,
+        uid: int,
+        threshold_bytes: int,
+        observed_total_bytes: int,
+        sent_at: datetime,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO daily_alerts(
+                    alert_date, uid, threshold_bytes, observed_total_bytes, sent_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    alert_date,
+                    uid,
+                    threshold_bytes,
+                    observed_total_bytes,
+                    sent_at.isoformat(timespec="seconds"),
+                ),
+            )
