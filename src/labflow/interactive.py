@@ -186,6 +186,10 @@ def _wrap_lines(lines: list[str], width: int) -> list[str]:
     return wrapped
 
 
+def _fit_pane_width(width: int, minimum: int = 8) -> int:
+    return max(width - 1, minimum)
+
+
 def build_monitor_rows(db: Database, month: str) -> tuple[list[dict[str, object]], int]:
     users = [dict(row) for row in db.list_users(active_only=True)]
     usage_rows = [dict(row) for row in db.monthly_report(month)]
@@ -426,6 +430,15 @@ class CursesMonitor:
         except curses.error:
             pass
 
+    def _draw_window_line(self, window, y: int, x: int, width: int, text: str, attr: int = 0) -> None:
+        if width <= 0 or y < 0:
+            return
+        try:
+            fitted = _fit_display(text, width)
+            window.addstr(y, x, fitted, attr)
+        except curses.error:
+            pass
+
     def _init_colors(self) -> None:
         if not curses.has_colors():
             self.colors = {}
@@ -481,7 +494,7 @@ class CursesMonitor:
             self._draw_line(y, x + 2, max(width - 4, 0), f" {title} ", attr | curses.A_BOLD)
 
     def _draw_user_row(self, y: int, width: int, row: dict[str, object], selected: bool, zebra: bool) -> None:
-        content_width = max(width - 4, 8)
+        content_width = _fit_pane_width(width - 4)
         attr = 0
         if selected:
             attr = self._color("selected", curses.A_BOLD)
@@ -527,6 +540,8 @@ class CursesMonitor:
         right_x = left_width + 1
         right_width = width - right_x
         visible_height = max(pane_height - 3, 3)
+        left_inner_width = _fit_pane_width(left_width - 4)
+        right_inner_width = _fit_pane_width(right_width - 4)
         self._ensure_visible(visible_height)
 
         self._draw_box(pane_top, 0, pane_height, left_width, "用户排行", self._color("border"))
@@ -534,13 +549,13 @@ class CursesMonitor:
         self._draw_line(
             pane_top + 1,
             2,
-            left_width - 4,
+            left_inner_width,
             "序号  用户                       总流量",
             self._color("pane_title", curses.A_BOLD),
         )
 
         if not self.filtered_rows:
-            self._draw_line(pane_top + 3, 2, left_width - 4, "没有匹配当前筛选条件的用户。", self._color("warning"))
+            self._draw_line(pane_top + 3, 2, left_inner_width, "没有匹配当前筛选条件的用户。", self._color("warning"))
         else:
             for index in range(visible_height):
                 row_index = self.scroll_offset + index
@@ -557,7 +572,7 @@ class CursesMonitor:
 
         selected = self._selected_row()
         if selected is None:
-            self._draw_line(pane_top + 3, right_x + 2, right_width - 4, "当前没有选中用户。", self._color("warning"))
+            self._draw_line(pane_top + 3, right_x + 2, right_inner_width, "当前没有选中用户。", self._color("warning"))
         else:
             percent = (int(selected["total_bytes"]) / self.total_bytes * 100) if self.total_bytes else 0.0
             detail_height = max(pane_height - 2, 8)
@@ -580,13 +595,13 @@ class CursesMonitor:
                         f"{format_bytes(int(sample_row['total_bytes']))} "
                         f"(rx {format_bytes(int(sample_row['rx_bytes']))}, tx {format_bytes(int(sample_row['tx_bytes']))})"
                     )
-                detail_lines.append("按 t 查看“最大峰值”附近的命令")
+                detail_lines.append("按 t 看最大峰值那一刻附近的命令")
             else:
                 detail_lines.append("这个月还没有记录到峰值样本")
 
             command_rows, command_notes = self._recent_commands_for_selected(limit=5)
             command_show_source = _should_show_command_source(command_rows)
-            detail_lines.extend(["", "最近敲过的命令："])
+            detail_lines.extend(["", "最近输入过的命令（概览）："])
             if command_rows:
                 for command_row in command_rows:
                     detail_lines.append(_format_recent_command_brief(command_row, show_source=command_show_source))
@@ -606,7 +621,7 @@ class CursesMonitor:
             else:
                 detail_lines.append("这个月之前还没有历史记录")
 
-            wrapped_detail_lines = _wrap_lines(detail_lines, right_width - 4)
+            wrapped_detail_lines = _wrap_lines(detail_lines, right_inner_width)
             for offset, line in enumerate(wrapped_detail_lines[:detail_height]):
                 attr = 0
                 if line.endswith("："):
@@ -615,7 +630,7 @@ class CursesMonitor:
                     attr = self._color("muted")
                 elif "本月总量" in line or "接收：" in line or "发送：" in line:
                     attr = self._color("value")
-                self._draw_line(pane_top + 1 + offset, right_x + 2, right_width - 4, line, attr)
+                self._draw_line(pane_top + 1 + offset, right_x + 2, right_inner_width, line, attr)
 
         self._draw_line(
             height - 2,
@@ -719,7 +734,8 @@ class CursesMonitor:
 
         lines = [
             f"用户：{selected['display_name']}（{selected['login_name']} / uid={selected['uid']}）",
-            f"正在查看峰值 {sample_index + 1}/{len(samples)}：{_format_sample_time(sample_row['ts'])}",
+            f"当前峰值：{sample_index + 1}/{len(samples)}（默认先打开本月最大峰值）",
+            f"峰值时间：{_format_sample_time(sample_row['ts'])}",
             f"峰值流量：{format_bytes(int(sample_row['total_bytes']))}  "
             f"(接收 {format_bytes(int(sample_row['rx_bytes']))} / 发送 {format_bytes(int(sample_row['tx_bytes']))})",
             f"追踪窗口：{start.strftime('%m-%d %H:%M:%S')} ~ {end.strftime('%m-%d %H:%M:%S')}",
@@ -759,44 +775,27 @@ class CursesMonitor:
 
         sample_index = 0
         scroll = 0
+        self._draw()
         while True:
-            self._draw()
             height, width = self.stdscr.getmaxyx()
             popup_height = min(height - 4, 22)
             popup_width = min(width - 6, 112)
             popup_y = max((height - popup_height) // 2, 1)
             popup_x = max((width - popup_width) // 2, 2)
             visible_height = popup_height - 4
+            popup_inner_width = _fit_pane_width(popup_width - 4)
 
             lines, sample_index = self._build_trace_lines(sample_index)
-            wrapped = _wrap_lines(lines, popup_width - 4)
+            wrapped = _wrap_lines(lines, popup_inner_width)
             scroll = min(scroll, max(len(wrapped) - visible_height, 0))
 
             window = curses.newwin(popup_height, popup_width, popup_y, popup_x)
             window.bkgd(" ", self._color("popup"))
             window.erase()
             window.box()
-            try:
-                window.addnstr(
-                    0,
-                    2,
-                    " 流量追踪 ",
-                    popup_width - 4,
-                    self._color("popup_title", curses.A_BOLD),
-                )
-            except curses.error:
-                pass
+            self._draw_window_line(window, 0, 2, popup_inner_width, " 峰值追踪 ", self._color("popup_title", curses.A_BOLD))
             footer = "←/→ 切换峰值  ↑/↓ 滚动  r 重载  q 关闭"
-            try:
-                window.addnstr(
-                    popup_height - 1,
-                    2,
-                    footer.ljust(popup_width - 4),
-                    popup_width - 4,
-                    self._color("pane_title"),
-                )
-            except curses.error:
-                pass
+            self._draw_window_line(window, popup_height - 1, 2, popup_inner_width, footer, self._color("pane_title"))
             for offset, line in enumerate(wrapped[scroll : scroll + visible_height]):
                 attr = 0
                 if line.endswith("："):
@@ -805,10 +804,7 @@ class CursesMonitor:
                     attr = self._color("selected", curses.A_BOLD)
                 elif line.startswith("- "):
                     attr = self._color("warning")
-                try:
-                    window.addnstr(1 + offset, 2, line.ljust(popup_width - 4), popup_width - 4, attr)
-                except curses.error:
-                    pass
+                self._draw_window_line(window, 1 + offset, 2, popup_inner_width, line, attr)
             window.refresh()
 
             key = self.stdscr.getch()
@@ -836,6 +832,10 @@ class CursesMonitor:
     def _main(self, stdscr) -> int:
         self.stdscr = stdscr
         self._init_colors()
+        try:
+            curses.set_escdelay(25)
+        except AttributeError:
+            pass
         curses.curs_set(0)
         stdscr.keypad(True)
         self.refresh()

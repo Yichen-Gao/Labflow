@@ -19,7 +19,15 @@ from labflow.forensics import (
     parse_bash_history,
     parse_zsh_history,
 )
-from labflow.interactive import build_monitor_rows, find_matching_users, sanitize_filename
+from labflow.interactive import (
+    _display_width,
+    _fit_display,
+    _trim_to_width,
+    _wrap_lines,
+    build_monitor_rows,
+    find_matching_users,
+    sanitize_filename,
+)
 from labflow.nftables import build_rules, parse_counter_listing
 from labflow.systemd_assets import parse_default_interface
 
@@ -212,6 +220,11 @@ class LabflowTests(unittest.TestCase):
         self.assertEqual(1, len(parsed))
         self.assertEqual("wget https://example.com/file", parsed[0].command)
 
+    def test_display_width_helpers_handle_cjk(self) -> None:
+        self.assertEqual("流量", _trim_to_width("流量监控", 4))
+        self.assertEqual(7, _display_width(_fit_display("A流量", 7)))
+        self.assertEqual(["流量峰值", "追踪abc"], _wrap_lines(["流量峰值追踪abc"], 8))
+
     def test_load_recent_commands_prefers_timestamped_entries(self) -> None:
         from unittest.mock import patch
 
@@ -251,6 +264,26 @@ class LabflowTests(unittest.TestCase):
             with patch("labflow.forensics._load_shell_history_events", return_value=([], [], False, False)):
                 recent, notes = load_recent_commands("wuxi", "/datas/wuxi", 952, "Asia/Shanghai", limit=2)
         self.assertEqual(["python train.py"], [item.command for item in recent])
+        self.assertEqual([], notes)
+
+    def test_load_recent_commands_uses_quick_shell_path_for_monitor(self) -> None:
+        from unittest.mock import patch
+
+        events = [
+            CommandEvent(ts=None, source="bash_history", command="python train.py"),
+            CommandEvent(ts=None, source="bash_history", command="tail -f train.log"),
+        ]
+        with patch("labflow.forensics._load_recent_shell_events_quick", return_value=(events, [])):
+            with patch("labflow.forensics._load_shell_history_events", side_effect=AssertionError("slow path should not run")):
+                recent, notes = load_recent_commands(
+                    "wuxi",
+                    "/datas/wuxi",
+                    952,
+                    "Asia/Shanghai",
+                    limit=2,
+                    prefer_audit=False,
+                )
+        self.assertEqual(["python train.py", "tail -f train.log"], [item.command for item in recent])
         self.assertEqual([], notes)
 
 

@@ -243,6 +243,22 @@ def _read_text_maybe_gzip(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _read_tail_text(path: Path, max_bytes: int = 131072) -> str:
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        if size > max_bytes:
+            handle.seek(-max_bytes, 2)
+            chunk = handle.read()
+            newline = chunk.find(b"\n")
+            if newline >= 0:
+                chunk = chunk[newline + 1 :]
+        else:
+            handle.seek(0)
+            chunk = handle.read()
+    return chunk.decode("utf-8", errors="replace")
+
+
 def _ausearch_timestamp_parts(dt: datetime) -> tuple[str, str]:
     local = dt.astimezone(dt.tzinfo or ZoneInfo("UTC"))
     return local.strftime("%Y-%m-%d"), local.strftime("%H:%M:%S")
@@ -415,6 +431,71 @@ def _load_shell_history_events(
     return events, notes, history_events_found, undated_history_found
 
 
+def _parse_quick_history_events(path: Path, text: str, timezone_name: str) -> list[CommandEvent]:
+    if path.name == ".bash_history":
+        parsed = parse_bash_history(text, timezone_name)
+        if parsed:
+            return parsed
+        fallback: list[CommandEvent] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or _BASH_TS_RE.match(line):
+                continue
+            fallback.append(CommandEvent(ts=None, source="bash_history", command=line))
+        return fallback
+    if path.name == ".zsh_history":
+        return parse_zsh_history(text, timezone_name)
+    return parse_fish_history(text, timezone_name)
+
+
+def _load_recent_shell_events_quick(
+    login_name: str,
+    data_dir: str | None,
+    timezone_name: str,
+    limit: int,
+) -> tuple[list[CommandEvent], list[str]]:
+    notes: list[str] = []
+    events: list[CommandEvent] = []
+    history_found = False
+    min_ts = datetime.min.replace(tzinfo=ZoneInfo(timezone_name))
+
+    for path in _history_candidates(login_name, data_dir):
+        try:
+            exists = path.exists()
+        except PermissionError:
+            notes.append(f"shell history 不可读：{path}")
+            continue
+        if not exists:
+            continue
+        history_found = True
+        try:
+            text = _read_tail_text(path)
+        except PermissionError:
+            notes.append(f"shell history 不可读：{path}")
+            continue
+        parsed = _parse_quick_history_events(path, text, timezone_name)
+        if not parsed:
+            continue
+        if any(event.ts is not None for event in parsed):
+            ordered = sorted(parsed, key=lambda item: item.ts or min_ts, reverse=True)
+        else:
+            ordered = list(reversed(parsed))
+        events.extend(ordered[: max(limit * 3, 12)])
+
+    unique: dict[tuple[datetime | None, str, str], CommandEvent] = {}
+    for event in events:
+        unique[(event.ts, event.source, event.command)] = event
+
+    timestamped = sorted([event for event in unique.values() if event.ts is not None], key=lambda item: item.ts or min_ts, reverse=True)
+    undated = [event for event in unique.values() if event.ts is None]
+    ordered = timestamped + undated
+    if ordered:
+        return ordered[: max(limit, 1)], notes
+    if history_found and not notes:
+        notes.append("找到了 shell history，但暂时没解析出可显示的命令")
+    return [], notes
+
+
 def load_command_events(
     login_name: str,
     data_dir: str | None,
@@ -511,6 +592,19 @@ def load_recent_commands(
             lookback_minutes=180,
         )
         notes.extend(audit_notes)
+    else:
+        quick_events, quick_notes = _load_recent_shell_events_quick(
+            login_name=login_name,
+            data_dir=data_dir,
+            timezone_name=timezone_name,
+            limit=max(limit, 1),
+        )
+        notes.extend(quick_notes)
+        if quick_events:
+            meaningful = [event for event in quick_events if not _is_background_command(event)]
+            if meaningful:
+                return meaningful[: max(limit, 1)], notes
+            return quick_events[: max(limit, 1)], notes
 
     history_events, history_notes, history_found, undated_history_found = _load_shell_history_events(
         login_name=login_name,
