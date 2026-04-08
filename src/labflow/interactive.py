@@ -657,7 +657,7 @@ class CursesMonitor:
             height - 2,
             0,
             width,
-            " 方向键 / j k 移动  PgUp/PgDn 翻页  Home/End 跳转  Enter 聚焦  t 打开追踪窗口 ",
+            " 方向键 / j k 移动  PgUp/PgDn 翻页  Home/End 跳转  Enter / t 打开峰值追踪 ",
             self._color("muted"),
         )
         self._draw_line(height - 1, 0, width, f" 状态：{self.status_message} ", self._color("status"))
@@ -898,7 +898,7 @@ class CursesMonitor:
             if key in (ord("m"),):
                 self._change_month()
                 continue
-            if key in (ord("t"),):
+            if key in (ord("t"), ord("T")):
                 self._show_trace_popup()
                 continue
             if key in (ord("e"),):
@@ -911,16 +911,14 @@ class CursesMonitor:
                 self.refresh()
                 self._set_status("已刷新")
                 continue
-            if key in (10, 13):
+            if key in (10, 13, curses.KEY_ENTER):
                 selected = self._selected_row()
                 if selected is None:
                     self._set_status("当前没有选中用户")
                 else:
-                    self._set_status(
-                        f"{selected['display_name']}：右侧可看流量、峰值、最近命令和历史"
-                    )
+                    self._show_trace_popup()
                 continue
-            self._set_status("可用按键：方向键/jk、/、c、m、t、e、u、r、q")
+            self._set_status("可用按键：方向键/jk、/、c、m、Enter/t、e、u、r、q")
         return 0
 
     def run(self) -> int:
