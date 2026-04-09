@@ -71,6 +71,14 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 
 这样这段时间的流量不会被计入统计，但计数器状态仍会继续更新，不会把免费时段流量串到早上 6 点以后。
 
+如果你是部署一段时间后才想起加这个配置，还可以执行一次：
+
+```bash
+lab apply-free-windows
+```
+
+它会先备份数据库，再把历史上已经记进去的免费时段样本清掉，并重建月统计。
+
 ## 第三步：先检查识别出来的用户对不对
 
 ```bash

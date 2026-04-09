@@ -16,6 +16,12 @@ lab monitor
 "free_traffic_windows": ["00:00-06:00"]
 ```
 
+如果这是后来才加上的，顺手再跑一次：
+
+```bash
+lab apply-free-windows
+```
+
 现在右侧详情区会直接显示：
 
 - 当前用户本月流量明细

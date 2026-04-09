@@ -242,6 +242,56 @@ class LabflowTests(unittest.TestCase):
             db.record_daily_alert("2026-04-08", 1000, 2048, 3072, ts)
             self.assertTrue(db.has_daily_alert("2026-04-08", 1000, 2048))
 
+    def test_prune_free_traffic_samples_rebuilds_monthly_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = LabflowConfig(
+                data_root=root,
+                db_path=root / "labflow.db",
+                external_interfaces=("eth0",),
+                timezone="Asia/Shanghai",
+                free_traffic_windows=("00:00-06:00",),
+                skip_hidden_dirs=True,
+            )
+            db = Database(config)
+            free_ts = datetime(2026, 4, 8, 1, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+            paid_ts = datetime(2026, 4, 8, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+            db.apply_counter_snapshot(free_ts, {1000: {"rx": 100, "tx": 100}})
+            with db.connect() as conn:
+                conn.execute(
+                    "INSERT INTO samples(ts, month, uid, rx_bytes, tx_bytes) VALUES (?, ?, ?, ?, ?)",
+                    (free_ts.isoformat(timespec="seconds"), "2026-04", 1000, 1024, 2048),
+                )
+                conn.execute(
+                    "INSERT INTO samples(ts, month, uid, rx_bytes, tx_bytes) VALUES (?, ?, ?, ?, ?)",
+                    (paid_ts.isoformat(timespec="seconds"), "2026-04", 1000, 4096, 8192),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO monthly_usage(month, uid, rx_bytes, tx_bytes)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(month, uid) DO UPDATE SET
+                        rx_bytes = excluded.rx_bytes,
+                        tx_bytes = excluded.tx_bytes
+                    """,
+                    ("2026-04", 1000, 5120, 10240),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO daily_alerts(alert_date, uid, threshold_bytes, observed_total_bytes, sent_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    ("2026-04-08", 1000, 1024, 3072, paid_ts.isoformat(timespec="seconds")),
+                )
+            result = db.prune_free_traffic_samples()
+            self.assertEqual(1, result["removed_samples"])
+            self.assertEqual(1024, result["removed_rx_bytes"])
+            self.assertEqual(2048, result["removed_tx_bytes"])
+            month_row = db.user_month_usage(1000, "2026-04")
+            self.assertIsNotNone(month_row)
+            self.assertEqual(4096 + 8192, int(month_row["total_bytes"]))
+            self.assertFalse(db.has_daily_alert("2026-04-08", 1000, 1024))
+
     def test_parse_audit_exec_events(self) -> None:
         lines = [
             'type=SYSCALL msg=audit(1775638895.000:420): arch=c000003e syscall=59 success=yes exit=0 ppid=111 pid=222 auid=952 uid=952 gid=952 euid=952 suid=952 fsuid=952 tty=pts0 ses=7 comm="python3" exe="/usr/bin/python3" key="labflow-exec"',

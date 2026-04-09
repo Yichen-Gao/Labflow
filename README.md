@@ -97,6 +97,14 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 
 这样 `Labflow` 仍然会持续更新计数器状态，但不会把这段时间的流量计入月报、排行和单日告警。
 
+如果你是中途才加上这个配置，之前已经统计进去的免费时段流量也可以一键清掉：
+
+```bash
+lab apply-free-windows
+```
+
+这个命令会先备份数据库，再删掉历史上落在免费时段里的样本，并重建月报统计。
+
 ### 2. 先确认用户识别没问题
 
 ```bash

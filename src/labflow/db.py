@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Iterator
+from zoneinfo import ZoneInfo
 
 from .config import LabflowConfig
 from .models import CollectResult, UserRecord
@@ -386,3 +387,58 @@ class Database:
                     sent_at.isoformat(timespec="seconds"),
                 ),
             )
+
+    def prune_free_traffic_samples(self) -> dict[str, object]:
+        timezone = ZoneInfo(self.config.timezone)
+        removed_ids: list[int] = []
+        affected_months: set[str] = set()
+        affected_dates: set[str] = set()
+        removed_rx = 0
+        removed_tx = 0
+
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, ts, month, rx_bytes, tx_bytes FROM samples ORDER BY id"
+            ).fetchall()
+            for row in rows:
+                ts = datetime.fromisoformat(str(row["ts"]))
+                if not self.config.is_free_traffic_time(ts):
+                    continue
+                removed_ids.append(int(row["id"]))
+                affected_months.add(str(row["month"]))
+                local = ts.astimezone(timezone)
+                affected_dates.add(local.strftime("%Y-%m-%d"))
+                removed_rx += int(row["rx_bytes"])
+                removed_tx += int(row["tx_bytes"])
+
+            if removed_ids:
+                placeholders = ", ".join("?" for _ in removed_ids)
+                conn.execute(f"DELETE FROM samples WHERE id IN ({placeholders})", tuple(removed_ids))
+
+                conn.execute("DELETE FROM monthly_usage")
+                conn.execute(
+                    """
+                    INSERT INTO monthly_usage(month, uid, rx_bytes, tx_bytes)
+                    SELECT month, uid, COALESCE(SUM(rx_bytes), 0), COALESCE(SUM(tx_bytes), 0)
+                    FROM samples
+                    GROUP BY month, uid
+                    """
+                )
+
+            deleted_alert_rows = 0
+            if affected_dates:
+                placeholders = ", ".join("?" for _ in affected_dates)
+                cursor = conn.execute(
+                    f"DELETE FROM daily_alerts WHERE alert_date IN ({placeholders})",
+                    tuple(sorted(affected_dates)),
+                )
+                deleted_alert_rows = cursor.rowcount if cursor.rowcount is not None else 0
+
+        return {
+            "removed_samples": len(removed_ids),
+            "removed_rx_bytes": removed_rx,
+            "removed_tx_bytes": removed_tx,
+            "affected_months": tuple(sorted(affected_months)),
+            "affected_dates": tuple(sorted(affected_dates)),
+            "deleted_alert_rows": deleted_alert_rows,
+        }

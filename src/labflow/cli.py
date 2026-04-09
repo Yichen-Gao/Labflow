@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -125,6 +126,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     check_quota = subparsers.add_parser("check-quota", help="Compare current month usage against quotas")
     check_quota.add_argument("--month", help="Month in YYYY-MM format; defaults to the current month")
+
+    apply_free = subparsers.add_parser(
+        "apply-free-windows",
+        help="Remove already-recorded samples that fall into configured free traffic windows",
+    )
+    apply_free.add_argument("--no-backup", action="store_true", help="Skip creating a database backup before cleanup")
 
     return parser
 
@@ -582,6 +589,38 @@ def handle_check_quota(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_apply_free_windows(args: argparse.Namespace) -> int:
+    config, db = load_runtime(args.config)
+    if not config.free_traffic_windows:
+        print("No free_traffic_windows configured")
+        return 0
+
+    backup_path = None
+    if not args.no_backup:
+        timestamp = now_in_timezone(config.timezone).strftime("%Y%m%d-%H%M%S")
+        backup_dir = config.db_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / f"{config.db_path.stem}-before-free-windows-{timestamp}{config.db_path.suffix}"
+        shutil.copy2(config.db_path, backup_path)
+
+    result = db.prune_free_traffic_samples()
+    print(f"Applied free windows: {', '.join(config.free_traffic_windows)}")
+    if backup_path is not None:
+        print(f"Backup created: {backup_path}")
+    print(
+        f"Removed samples={result['removed_samples']} "
+        f"rx={format_bytes(int(result['removed_rx_bytes']))} "
+        f"tx={format_bytes(int(result['removed_tx_bytes']))}"
+    )
+    if result["affected_months"]:
+        print("Affected months: " + ", ".join(result["affected_months"]))
+    if result["affected_dates"]:
+        print("Affected dates: " + ", ".join(result["affected_dates"]))
+    if int(result["deleted_alert_rows"]):
+        print(f"Deleted stale daily alert markers: {result['deleted_alert_rows']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -603,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
         "history": handle_history,
         "trace": handle_trace,
         "check-quota": handle_check_quota,
+        "apply-free-windows": handle_apply_free_windows,
     }
     return handlers[args.command](args)
 
