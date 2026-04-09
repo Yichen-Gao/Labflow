@@ -50,7 +50,7 @@
 
 ### 排行与报表
 
-![Labflow report](docs/images/report.svg)
+![Labflow report](docs/images/report.png)
 
 ## 适用前提
 
