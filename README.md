@@ -1,11 +1,7 @@
-# Labflow - Per-User Traffic Monitor
+# Labflow - 服务器流量统计 / Per-User Traffic Monitor
 
-## 实验室共享服务器按用户流量统计工具
-
-<p align="center">
-  <strong>Track monthly external traffic for each Linux user on a shared server.</strong><br/>
-  自动识别 <code>/datas</code> 下的用户目录 owner，按 UID 统计外网流量，支持免费时段不计费、历史保留、异常邮件提醒。
-</p>
+实验室共享 Linux 服务器的按用户外网流量统计工具。  
+自动识别 `/datas/<用户名>` 目录 owner，对应 UID 计量；支持月度统计、免费时段不计费、历史保留、异常邮件告警、全屏 TUI。
 
 <p align="center">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" />
@@ -14,35 +10,43 @@
   <img alt="License" src="https://img.shields.io/badge/License-MIT-16A34A" />
 </p>
 
-如果你的服务器是多人共用、每个月有总流量额度、又希望知道“到底是谁用掉了多少外网流量”，`Labflow` 就是一个直接解决这个问题的工具。
+## 目录
 
-## 为什么会有这个项目
+- [这个项目解决什么问题](#这个项目解决什么问题)
+- [30 秒看能力](#30-秒看能力)
+- [界面预览](#界面预览)
+- [适用前提与统计口径](#适用前提与统计口径)
+- [3 分钟快速开始](#3-分钟快速开始)
+- [命令速查（按任务）](#命令速查按任务)
+- [监控界面快捷键](#监控界面快捷键)
+- [配置重点](#配置重点)
+- [常见排障](#常见排障)
+- [文档与仓库结构](#文档与仓库结构)
+- [贡献与安全](#贡献与安全)
+- [License](#license)
 
-很多实验室服务器都会遇到同一个问题：
+## 这个项目解决什么问题
 
-- 机器是多人共用的，但外网流量额度按整机算
-- 想知道从每月 1 号到现在，每个用户分别用了多少流量
-- 月底要自动重新开始统计，但历史还得保留
-- 日常想快速看排行榜，排查谁突然出现异常流量
+多人共用服务器时，流量额度通常按整机计算，但管理员需要知道：
 
-`Labflow` 的设计目标就是：部署一次，之后日常只需要输入 `lab monitor`。
+- 从每月 1 号到现在，每个用户各用了多少外网流量
+- 谁在短时间内出现异常突增
+- 月底自动切月统计，历史可追溯
 
-## 核心能力
+`Labflow` 的目标是：部署一次，日常只要 `lab monitor`。
 
-- 自动扫描 `data_root` 下的用户目录，默认适合 `/datas/<用户名>` 结构
-- 根据目录 owner 识别 UID，按 UID 做月度外网流量统计
-- 只统计指定外网网卡，不把本机内部通信混进去
-- 支持配置免费时段，例如 `0:00-6:00` 不计费
-- 按自然月聚合，历史月报自动保留，不需要手动清零
-- 提供 `report`、`top`、`history`、`export-csv`、`check-quota` 等命令
-- 提供 `trace` 命令，排查某个流量突增时段附近执行过什么命令
-- 支持“单日超过阈值自动发邮件”，适合盯异常用户
-- 提供全屏终端监控界面，支持方向键上下选择、搜索、导出和切换月份
-- 提供系统级 `lab` 启动命令，任何目录都能直接打开
+## 30 秒看能力
+
+- 基于 `nftables` 按 UID 统计外网接口流量（`RX/TX`）
+- 自动扫描 `data_root`（默认 `/datas`）并同步用户
+- 按自然月聚合，历史月份自动保留
+- 支持免费时段不计费（如 `00:00-06:00`）
+- 支持 `report/top/history/export-csv/check-quota`
+- 支持 `trace`，定位流量峰值附近命令
+- 支持单日流量阈值邮件提醒（同用户同日去重）
+- 提供全屏 TUI，方向键选择、搜索、导出、切月
 
 ## 界面预览
-
-下面是项目内置 TUI 和 CLI 的示意图，实际内容会根据你的服务器数据变化。
 
 ### 全屏监控
 
@@ -52,27 +56,27 @@
 
 ![Labflow report](docs/images/report.png)
 
-## 适用前提
+## 适用前提与统计口径
 
-部署前先确认下面几点：
+部署前确认：
 
-- 服务器是 Linux，且有 `Python 3.10+`、`nftables`、`systemd`
-- 你有 root 权限，至少能执行一次安装脚本
-- 每个用户最好有独立 Linux UID
+- Linux + `Python 3.10+` + `nftables` + `systemd`
+- 具备 root 权限（至少执行一次安装脚本）
+- 每个用户有独立 UID
 - 用户目录结构类似 `/datas/<用户名>`
-- 你知道服务器的外网接口名，例如 `eth0`、`ens2f2`
+- 明确外网接口名（如 `eth0`、`ens2f2`）
 
-不太适合的情况：
+不适合场景：
 
-- 多个人共用同一个 Linux 账号
-- 只靠目录名区分人，但实际任务都跑在同一个 UID 下
-- 你需要和校园网网关结算做到字节级完全一致
+- 多人共用同一个 Linux 账号
+- 目录 owner 与实际运行任务 UID 长期不一致
+- 要求与校园网网关结算字节级完全一致
 
-一句话：`Labflow` 统计的是“本机用户 UID 在外网接口上的实际流量”，适合做实验室内部审计、排行和预警；如果学校最终结算看的是 `ipgw s` 或其他网关账单，请把它当成非常接近的本机侧观测，而不是官方计费系统本身。
+口径说明：`Labflow` 是本机侧观测，统计“UID 在指定外网接口上的流量”，适合内部审计、排行和预警。
 
-## 5 分钟快速开始
+## 3 分钟快速开始
 
-### 1. 克隆仓库并准备配置
+### 1) 克隆并准备配置
 
 ```bash
 git clone https://github.com/Yichen-Gao/Labflow.git
@@ -81,210 +85,161 @@ cp labflow.example.json labflow.json
 PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 ```
 
-然后编辑 `labflow.json`，至少确认这些字段：
-
-- `data_root`：用户目录根目录，例如 `/datas`
-- `external_interfaces`：外网接口，例如 `ens2f2`
-- `timezone`：例如 `Asia/Shanghai`
-- `free_traffic_windows`：免费时段，例如 `["00:00-06:00"]`
-- `total_monthly_quota_gb`：整机月额度
-- `user_soft_limit_gb`：单用户提醒阈值
-- `daily_alert_gb`：单日流量提醒阈值，例如 `2`
-- `alert_email_to`：告警收件人邮箱列表
-- `smtp_*`：SMTP 发信配置；如果要让 systemd 定时器直接发信，最省事是把授权码写进本机 `labflow.json`
-- `exclude_dirs`：共享目录排除列表
-
-建议把共享目录加入 `exclude_dirs`，例如：`datasets`、`shared_datasets`、`models`、`software`。
-
-如果你们学校像现在这样 `0:00-6:00` 是免费时段，可以直接配置：
-
-```json
-"free_traffic_windows": ["00:00-06:00"]
-```
-
-这样 `Labflow` 仍然会持续更新计数器状态，但不会把这段时间的流量计入月报、排行和单日告警。
-
-如果你是中途才加上这个配置，之前已经统计进去的免费时段流量也可以一键清掉：
-
-```bash
-lab apply-free-windows
-```
-
-这个命令会先备份数据库，再删掉历史上落在免费时段里的样本，并重建月报统计。
-
-### 2. 先确认用户识别没问题
+### 2) 校验用户识别
 
 ```bash
 PYTHONPATH=src python3 -m labflow --config labflow.json sync-users
 PYTHONPATH=src python3 -m labflow --config labflow.json show-users
 ```
 
-如果这里识别结果不对，先调整 `exclude_dirs` 和目录 owner，再继续安装。
-
-### 3. 生成并安装 systemd / nftables 规则
+### 3) 生成并安装 systemd/nftables
 
 ```bash
 PYTHONPATH=src python3 -m labflow --config labflow.json write-systemd
 sudo ./contrib/systemd/generated/install-systemd-root.sh
 ```
 
-安装脚本会自动完成：
-
-- 同步用户
-- 安装 `nftables` 规则
-- 采一轮初始样本
-- 启用定时任务
-
-### 4. 安装全局启动命令
-
-只给当前用户安装：
-
-```bash
-./contrib/install-lab-launcher.sh
-```
-
-给整台服务器所有用户安装：
+### 4) 安装全局启动命令
 
 ```bash
 sudo ./contrib/install-system-wide-lab.sh
 ```
 
-如果你希望任何用户在任何目录都能直接输入 `lab monitor`，用第二个。
-
-如果你希望在监控界面右侧顺手看到“其他用户最近输入过什么命令”，建议管理员直接用 `sudo lab monitor` 打开，这样更容易读取别人的 shell history。
-
-### 5. 打开监控界面
+### 5) 打开监控
 
 ```bash
 lab monitor
 ```
 
-## 日常使用
+## 命令速查（按任务）
 
-最常用的是下面几条：
-
-```bash
-lab monitor
-lab report
-lab top --limit 10
-lab history zhangsan
-lab trace zhangsan
-lab export-csv --month 2026-04 --output usage-2026-04.csv
-lab check-quota
-lab check-alerts --dry-run
-```
-
-默认展示按总流量从高到低排序。
-
-现在 `lab monitor` 右侧除了月度流量，还会显示：
-
-- 这个用户本月最大的几次流量高峰
-- 这个用户最近输入过的几条命令概览（默认不带时间，优先保证顺滑）
-- 这个用户最近几个月历史
-
-另外按 `t` 会直接打开“本月最大峰值”的追踪窗口；如果已经启用了 `auditd`，这里能看到带精确时间的命令记录，并可左右切换到其他峰值。
-
-## 常见场景
-
-### 想看从本月 1 号到现在谁用得最多
+看本月完整排行：
 
 ```bash
 lab report
 ```
 
-### 只看前 10 名
+只看前 N 名：
 
 ```bash
 lab top --limit 10
 ```
 
-### 想查某个用户的历史月报
+看某个用户近几个月趋势：
 
 ```bash
 lab history zhangsan
 ```
 
-### 想排查某个用户某次突增时到底跑了什么
+排查流量峰值附近命令：
 
 ```bash
 lab trace zhangsan
 lab trace zhangsan --around 2026-04-08T17:01:35+08:00 --window-minutes 20
 ```
 
-`trace` 会先找到这个用户的流量高峰样本，再去时间窗口里找：
-
-- `auditd` 里的 `execve` 记录
-- 带时间戳的 shell history
-
-注意：它能告诉你“这个时段附近执行过什么命令”，但不能严格证明某一条命令精确消耗了多少字节。
-
-### 想导出报表或存档
+导出 CSV：
 
 ```bash
 lab export-csv --month 2026-04 --output usage-2026-04.csv
 ```
 
-### 想在一天内有人突然用太多时自动收到邮件
-
-先在 `labflow.json` 里配置：
-
-- `daily_alert_gb`
-- `alert_email_to`
-- `smtp_host`
-- `smtp_port`
-- `smtp_username`
-- `smtp_password_env`
-- `smtp_from`
-
-如果只是手动试跑，可以先临时放到环境变量里：
+检查整机月额度：
 
 ```bash
-export LABFLOW_SMTP_PASSWORD='你的 SMTP 授权码'
+lab check-quota
+```
+
+手动预演告警邮件：
+
+```bash
 lab check-alerts --dry-run
 ```
 
-如果要让定时器自动发信，最简单的是把 `smtp_password` 直接写进本机的 `labflow.json`；这个文件默认不会进 Git。
+## 监控界面快捷键
 
-`collect` 定时任务每次运行后都会顺手检查一次；如果某个用户“今天 00:00 到现在”累计超过阈值，就会自动发邮件，而且同一个用户同一天只发一次。
+- `↑/↓` 或 `j/k`：移动选中用户
+- `/`：搜索用户名/显示名/UID
+- `c`：清空搜索
+- `m`：切换月份
+- `t`：打开当前用户峰值追踪
+- `e`：导出当前月份 CSV
+- `u`：导出当前用户历史 CSV
+- `r`：刷新
+- `q`：退出
 
-### 想确认定时任务是否正常运行
+提示：若要查看其他用户命令信息，建议管理员使用 `sudo lab monitor`。
+
+## 配置重点
+
+下面是最关键的配置项（`labflow.json`）：
+
+- `data_root`：用户目录根路径（如 `/datas`）
+- `external_interfaces`：外网接口
+- `timezone`：时区（如 `Asia/Shanghai`）
+- `free_traffic_windows`：免费时段（如 `"00:00-06:00"`）
+- `exclude_dirs`：共享目录排除列表
+- `total_monthly_quota_gb`：整机月总额度
+- `user_soft_limit_gb`：单用户软阈值
+- `daily_alert_gb`：单日告警阈值
+- `alert_email_to`：告警收件邮箱
+- `smtp_*`：SMTP 发信参数
+
+如果你是中途才加免费时段配置，可执行：
+
+```bash
+lab apply-free-windows
+```
+
+该命令会先备份数据库，再清理历史免费时段样本并重建月统计。
+
+## 常见排障
+
+`lab` 在其他用户下找不到：
+
+```bash
+sudo ./contrib/install-system-wide-lab.sh
+```
+
+检查定时任务是否正常：
 
 ```bash
 systemctl status labflow-refresh.timer labflow-collect.timer
 journalctl -u labflow-collect.service -u labflow-refresh.service -n 50 --no-pager
 ```
 
-## 如果你还想知道“突增时跑了什么命令”
+检查规则是否已加载：
 
-默认的流量统计只能告诉你：
+```bash
+sudo nft list table inet labflow
+```
 
-- 谁在什么时段流量突然升高
-- 那次升高主要是 `RX` 还是 `TX`
-
-如果你还想继续追到“这个时间附近到底执行了什么命令”，建议把命令审计也打开：
+`trace` 看不到命令：先安装审计规则：
 
 ```bash
 sudo apt install auditd
 sudo ./contrib/install-auditd-exec-rules.sh
-lab trace <用户名>
 ```
 
-这样以后再出现突增，`lab trace` 就能把流量高峰和命令执行时间对上。
+## 文档与仓库结构
 
-## 文档
+文档：
 
-- `docs/INSTALL.md`：部署教程
-- `docs/ADMIN_COMMANDS.md`：管理员日常命令速查
+- `docs/INSTALL.md`：完整安装教程
+- `docs/ADMIN_COMMANDS.md`：管理员命令速查
 - `contrib/systemd/README.md`：systemd 生成文件说明
-- `contrib/install-auditd-exec-rules.sh`：安装 `auditd` 命令审计规则
 
-## 仓库结构
+核心目录：
 
 - `src/labflow/`：核心实现
 - `tests/`：测试
+- `contrib/`：部署脚本与辅助工具
 - `labflow.example.json`：示例配置
-- `contrib/install-lab-launcher.sh`：给当前用户安装 `lab`
-- `contrib/install-system-wide-lab.sh`：给所有用户安装 `lab`
+
+## 贡献与安全
+
+- 贡献指南：`CONTRIBUTING.md`
+- 安全报告：`SECURITY.md`
 
 ## License
 
