@@ -1,8 +1,10 @@
-# Labflow
+# Labflow - Per-User Traffic Monitor
+
+## 实验室共享服务器按用户流量统计工具
 
 <p align="center">
-  <strong>面向实验室共享服务器的按用户月度外网流量统计工具</strong><br/>
-  自动识别 <code>/datas</code> 下的用户目录 owner，按 UID 统计从每月 1 号到现在的外网流量，并保留历史记录。
+  <strong>Track monthly external traffic for each Linux user on a shared server.</strong><br/>
+  自动识别 <code>/datas</code> 下的用户目录 owner，按 UID 统计外网流量，支持免费时段不计费、历史保留、异常邮件提醒。
 </p>
 
 <p align="center">
@@ -12,7 +14,7 @@
   <img alt="License" src="https://img.shields.io/badge/License-MIT-16A34A" />
 </p>
 
-如果你的服务器是多人共用、每个月有总流量额度、又希望知道“到底是谁用掉了多少外网流量”，`Labflow` 就是为这个场景做的。
+如果你的服务器是多人共用、每个月有总流量额度、又希望知道“到底是谁用掉了多少外网流量”，`Labflow` 就是一个直接解决这个问题的工具。
 
 ## 为什么会有这个项目
 
@@ -30,6 +32,7 @@
 - 自动扫描 `data_root` 下的用户目录，默认适合 `/datas/<用户名>` 结构
 - 根据目录 owner 识别 UID，按 UID 做月度外网流量统计
 - 只统计指定外网网卡，不把本机内部通信混进去
+- 支持配置免费时段，例如 `0:00-6:00` 不计费
 - 按自然月聚合，历史月报自动保留，不需要手动清零
 - 提供 `report`、`top`、`history`、`export-csv`、`check-quota` 等命令
 - 提供 `trace` 命令，排查某个流量突增时段附近执行过什么命令
