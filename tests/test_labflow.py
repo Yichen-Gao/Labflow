@@ -81,6 +81,34 @@ class LabflowTests(unittest.TestCase):
             self.assertEqual(20, third.delta_tx_bytes)
             self.assertEqual(["uid:1000:rx", "uid:1000:tx"], third.reset_counters)
 
+    def test_free_traffic_window_updates_state_without_counting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = LabflowConfig(
+                data_root=root,
+                db_path=root / "labflow.db",
+                external_interfaces=("eth0",),
+                timezone="Asia/Shanghai",
+                free_traffic_windows=("00:00-06:00",),
+                skip_hidden_dirs=True,
+            )
+            db = Database(config)
+            free_ts_1 = datetime(2026, 4, 8, 0, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+            free_ts_2 = datetime(2026, 4, 8, 5, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
+            paid_ts = datetime(2026, 4, 8, 6, 10, tzinfo=ZoneInfo("Asia/Shanghai"))
+            first = db.apply_counter_snapshot(free_ts_1, {1000: {"rx": 100, "tx": 200}})
+            second = db.apply_counter_snapshot(free_ts_2, {1000: {"rx": 160, "tx": 260}})
+            third = db.apply_counter_snapshot(paid_ts, {1000: {"rx": 210, "tx": 310}})
+            self.assertEqual(0, first.delta_rx_bytes)
+            self.assertEqual(0, first.delta_tx_bytes)
+            self.assertEqual(0, second.delta_rx_bytes)
+            self.assertEqual(0, second.delta_tx_bytes)
+            self.assertEqual(50, third.delta_rx_bytes)
+            self.assertEqual(50, third.delta_tx_bytes)
+            rows = db.monthly_report("2026-04")
+            self.assertEqual(1, len(rows))
+            self.assertEqual(100, int(rows[0]["total_bytes"]))
+
     def test_build_rules_and_parse_counters(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -4,6 +4,7 @@
   "table_name": "labflow",
   "external_interfaces": ["eth0"],
   "timezone": "Asia/Shanghai",
+  "free_traffic_windows": ["00:00-06:00"],
   "total_monthly_quota_gb": 90,
   "user_soft_limit_gb": 20,
   "daily_alert_gb": 2,

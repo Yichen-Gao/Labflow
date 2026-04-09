@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class LabflowConfig:
     nft_binary: str = "nft"
     extra_users: tuple[ExtraUser, ...] = field(default_factory=tuple)
     user_overrides: tuple[UserOverride, ...] = field(default_factory=tuple)
+    free_traffic_windows: tuple[str, ...] = field(default_factory=tuple)
     daily_alert_gb: float | None = None
     alert_email_to: tuple[str, ...] = field(default_factory=tuple)
     smtp_host: str | None = None
@@ -82,6 +85,23 @@ class LabflowConfig:
         if self.smtp_from:
             return (self.smtp_from,)
         return tuple()
+
+    def is_free_traffic_time(self, dt: datetime) -> bool:
+        if not self.free_traffic_windows:
+            return False
+        local = dt.astimezone(ZoneInfo(self.timezone))
+        minute_of_day = local.hour * 60 + local.minute
+        for raw_window in self.free_traffic_windows:
+            start_minute, end_minute = _parse_time_window(raw_window)
+            if start_minute == end_minute:
+                return True
+            if start_minute < end_minute:
+                if start_minute <= minute_of_day < end_minute:
+                    return True
+            else:
+                if minute_of_day >= start_minute or minute_of_day < end_minute:
+                    return True
+        return False
 
 
 def _parse_extra_users(items: list[dict[str, object]]) -> tuple[ExtraUser, ...]:
@@ -134,6 +154,26 @@ def _parse_string_tuple(value: object) -> tuple[str, ...]:
     return tuple()
 
 
+def _parse_time_window(raw_value: str) -> tuple[int, int]:
+    text = raw_value.strip()
+    if "-" not in text:
+        raise ValueError(f"invalid free_traffic_windows item: {raw_value}")
+    start_text, end_text = text.split("-", 1)
+    return _parse_clock_minutes(start_text), _parse_clock_minutes(end_text)
+
+
+def _parse_clock_minutes(raw_value: str) -> int:
+    text = raw_value.strip()
+    parts = text.split(":")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        raise ValueError(f"invalid clock value: {raw_value}")
+    hour = int(parts[0])
+    minute = int(parts[1])
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"invalid clock value: {raw_value}")
+    return hour * 60 + minute
+
+
 def load_config(path: str | Path) -> LabflowConfig:
     config_path = Path(path).expanduser().resolve()
     base_dir = config_path.parent
@@ -160,6 +200,7 @@ def load_config(path: str | Path) -> LabflowConfig:
         nft_binary=str(raw.get("nft_binary", "nft")),
         extra_users=_parse_extra_users(list(raw.get("extra_users", []))),
         user_overrides=_parse_user_overrides(list(raw.get("user_overrides", []))),
+        free_traffic_windows=_parse_string_tuple(raw.get("free_traffic_windows")),
         daily_alert_gb=(
             None if raw.get("daily_alert_gb") is None else float(raw["daily_alert_gb"])
         ),

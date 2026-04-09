@@ -183,6 +183,7 @@ class Database:
     ) -> CollectResult:
         month = month_key(ts, self.config.timezone)
         timestamp = ts.isoformat(timespec="seconds")
+        skip_accounting = self.config.is_free_traffic_time(ts)
         delta_by_uid: dict[int, dict[str, int]] = defaultdict(lambda: {"rx": 0, "tx": 0})
         current_state: dict[str, int] = {}
         reset_counters: list[str] = []
@@ -201,26 +202,28 @@ class Database:
                         reset_counters.append(key)
                     else:
                         delta = current - previous
-                    delta_by_uid[uid][direction] += delta
+                    if not skip_accounting:
+                        delta_by_uid[uid][direction] += delta
                     current_state[key] = current
 
-            for uid, deltas in delta_by_uid.items():
-                if deltas["rx"] == 0 and deltas["tx"] == 0:
-                    continue
-                conn.execute(
-                    "INSERT INTO samples(ts, month, uid, rx_bytes, tx_bytes) VALUES (?, ?, ?, ?, ?)",
-                    (timestamp, month, uid, deltas["rx"], deltas["tx"]),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO monthly_usage(month, uid, rx_bytes, tx_bytes)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(month, uid) DO UPDATE SET
-                        rx_bytes = rx_bytes + excluded.rx_bytes,
-                        tx_bytes = tx_bytes + excluded.tx_bytes
-                    """,
-                    (month, uid, deltas["rx"], deltas["tx"]),
-                )
+            if not skip_accounting:
+                for uid, deltas in delta_by_uid.items():
+                    if deltas["rx"] == 0 and deltas["tx"] == 0:
+                        continue
+                    conn.execute(
+                        "INSERT INTO samples(ts, month, uid, rx_bytes, tx_bytes) VALUES (?, ?, ?, ?, ?)",
+                        (timestamp, month, uid, deltas["rx"], deltas["tx"]),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO monthly_usage(month, uid, rx_bytes, tx_bytes)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(month, uid) DO UPDATE SET
+                            rx_bytes = rx_bytes + excluded.rx_bytes,
+                            tx_bytes = tx_bytes + excluded.tx_bytes
+                        """,
+                        (month, uid, deltas["rx"], deltas["tx"]),
+                    )
 
             for key, value in current_state.items():
                 conn.execute(

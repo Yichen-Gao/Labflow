@@ -292,6 +292,8 @@ def handle_collect(args: argparse.Namespace) -> int:
         f"Collected month={result.month} users={result.processed_users} "
         f"rx_delta={format_bytes(result.delta_rx_bytes)} tx_delta={format_bytes(result.delta_tx_bytes)}"
     )
+    if config.is_free_traffic_time(now):
+        print("Free window active: counter state updated, but this sample was not counted")
     if result.reset_counters:
         print("Detected counter resets: " + ", ".join(result.reset_counters))
     try:

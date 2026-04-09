@@ -79,6 +79,7 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 - `data_root`：用户目录根目录，例如 `/datas`
 - `external_interfaces`：外网接口，例如 `ens2f2`
 - `timezone`：例如 `Asia/Shanghai`
+- `free_traffic_windows`：免费时段，例如 `["00:00-06:00"]`
 - `total_monthly_quota_gb`：整机月额度
 - `user_soft_limit_gb`：单用户提醒阈值
 - `daily_alert_gb`：单日流量提醒阈值，例如 `2`
@@ -87,6 +88,14 @@ PYTHONPATH=src python3 -m labflow --config labflow.json detect-iface
 - `exclude_dirs`：共享目录排除列表
 
 建议把共享目录加入 `exclude_dirs`，例如：`datasets`、`shared_datasets`、`models`、`software`。
+
+如果你们学校像现在这样 `0:00-6:00` 是免费时段，可以直接配置：
+
+```json
+"free_traffic_windows": ["00:00-06:00"]
+```
+
+这样 `Labflow` 仍然会持续更新计数器状态，但不会把这段时间的流量计入月报、排行和单日告警。
 
 ### 2. 先确认用户识别没问题
 
