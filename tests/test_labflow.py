@@ -191,17 +191,17 @@ class LabflowTests(unittest.TestCase):
 
     def test_find_matching_users_prefers_exact_and_prefix_matches(self) -> None:
         rows = [
-            {"uid": 937, "login_name": "gaoyichen", "display_name": "gaoyichen", "data_dir": "/datas/gaoyichen"},
-            {"uid": 993, "login_name": "wzjtest", "display_name": "wzjtest", "data_dir": "/datas/wzjtest"},
-            {"uid": 1005, "login_name": "wangyanfei", "display_name": "wangyanfei", "data_dir": "/datas/wangyanfei"},
+            {"uid": 937, "login_name": "zhangsan", "display_name": "zhangsan", "data_dir": "/datas/zhangsan"},
+            {"uid": 993, "login_name": "lisi", "display_name": "lisi", "data_dir": "/datas/lisi"},
+            {"uid": 1005, "login_name": "wangwu", "display_name": "wangwu", "data_dir": "/datas/wangwu"},
         ]
-        matches = find_matching_users(rows, "gao")
+        matches = find_matching_users(rows, "zhang")
         self.assertEqual(937, matches[0]["uid"])
-        exact = find_matching_users(rows, "wzjtest")
+        exact = find_matching_users(rows, "lisi")
         self.assertEqual(993, exact[0]["uid"])
 
     def test_sanitize_filename(self) -> None:
-        self.assertEqual("gaoyichen-937", sanitize_filename("gaoyichen 937"))
+        self.assertEqual("zhangsan-937", sanitize_filename("zhangsan 937"))
 
     def test_build_monitor_rows_includes_zero_usage_users(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -296,25 +296,25 @@ class LabflowTests(unittest.TestCase):
         lines = [
             'type=SYSCALL msg=audit(1775638895.000:420): arch=c000003e syscall=59 success=yes exit=0 ppid=111 pid=222 auid=952 uid=952 gid=952 euid=952 suid=952 fsuid=952 tty=pts0 ses=7 comm="python3" exe="/usr/bin/python3" key="labflow-exec"',
             'type=EXECVE msg=audit(1775638895.000:420): argc=3 a0="python3" a1="-m" a2="http.server"',
-            'type=CWD msg=audit(1775638895.000:420): cwd="/datas/wuxi/project"',
+            'type=CWD msg=audit(1775638895.000:420): cwd="/datas/zhangsan/project"',
         ]
         start = datetime(2026, 4, 8, 17, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
         end = datetime(2026, 4, 8, 17, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
         parsed = parse_audit_exec_events(lines, target_uid=952, start=start, end=end, timezone_name="Asia/Shanghai")
         self.assertEqual(1, len(parsed))
         self.assertEqual("python3 -m http.server", parsed[0].command)
-        self.assertEqual("/datas/wuxi/project", parsed[0].cwd)
+        self.assertEqual("/datas/zhangsan/project", parsed[0].cwd)
         self.assertEqual(222, parsed[0].pid)
 
     def test_parse_audit_exec_events_decodes_hex_arguments(self) -> None:
         lines = [
             'type=SYSCALL msg=audit(1775638895.000:421): arch=c000003e syscall=59 success=yes exit=0 ppid=111 pid=223 auid=952 uid=952 gid=952 euid=952 suid=952 fsuid=952 tty=pts0 ses=7 comm="sh" exe="/bin/sh" key="labflow-exec"',
-            'type=EXECVE msg=audit(1775638895.000:421): argc=3 a0="/bin/sh" a1="-c" a2="6C73202D6C202F64617461732F77757869"',
+            'type=EXECVE msg=audit(1775638895.000:421): argc=3 a0="/bin/sh" a1="-c" a2="6c73202d6c202f64617461732f7a68616e6773616e"',
         ]
         start = datetime(2026, 4, 8, 17, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
         end = datetime(2026, 4, 8, 17, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
         parsed = parse_audit_exec_events(lines, target_uid=952, start=start, end=end, timezone_name="Asia/Shanghai")
-        self.assertEqual("/bin/sh -c ls -l /datas/wuxi", parsed[0].command)
+        self.assertEqual("/bin/sh -c ls -l /datas/zhangsan", parsed[0].command)
 
     def test_parse_bash_history_with_timestamps(self) -> None:
         text = "\n".join(
@@ -351,7 +351,7 @@ class LabflowTests(unittest.TestCase):
         ]
         with patch("labflow.forensics._load_recent_audit_events", return_value=([], [])):
             with patch("labflow.forensics._load_shell_history_events", return_value=(events, [], True, True)):
-                recent, notes = load_recent_commands("wuxi", "/datas/wuxi", 952, "Asia/Shanghai", limit=2)
+                recent, notes = load_recent_commands("zhangsan", "/datas/zhangsan", 952, "Asia/Shanghai", limit=2)
         self.assertEqual(["python train.py", "ls"], [item.command for item in recent])
         self.assertEqual([], notes)
 
@@ -365,7 +365,7 @@ class LabflowTests(unittest.TestCase):
         ]
         with patch("labflow.forensics._load_recent_audit_events", return_value=([], [])):
             with patch("labflow.forensics._load_shell_history_events", return_value=(events, [], True, True)):
-                recent, notes = load_recent_commands("wuxi", "/datas/wuxi", 952, "Asia/Shanghai", limit=2)
+                recent, notes = load_recent_commands("zhangsan", "/datas/zhangsan", 952, "Asia/Shanghai", limit=2)
         self.assertEqual(["python eval.py", "tail -f train.log"], [item.command for item in recent])
         self.assertTrue(any("无时间戳" in note for note in notes))
 
@@ -378,7 +378,7 @@ class LabflowTests(unittest.TestCase):
         ]
         with patch("labflow.forensics._load_recent_audit_events", return_value=(audit_events, [])):
             with patch("labflow.forensics._load_shell_history_events", return_value=([], [], False, False)):
-                recent, notes = load_recent_commands("wuxi", "/datas/wuxi", 952, "Asia/Shanghai", limit=2)
+                recent, notes = load_recent_commands("zhangsan", "/datas/zhangsan", 952, "Asia/Shanghai", limit=2)
         self.assertEqual(["python train.py"], [item.command for item in recent])
         self.assertEqual([], notes)
 
@@ -392,8 +392,8 @@ class LabflowTests(unittest.TestCase):
         with patch("labflow.forensics._load_recent_shell_events_quick", return_value=(events, [])):
             with patch("labflow.forensics._load_shell_history_events", side_effect=AssertionError("slow path should not run")):
                 recent, notes = load_recent_commands(
-                    "wuxi",
-                    "/datas/wuxi",
+                    "zhangsan",
+                    "/datas/zhangsan",
                     952,
                     "Asia/Shanghai",
                     limit=2,

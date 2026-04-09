@@ -44,9 +44,13 @@
 
 下面是项目内置 TUI 和 CLI 的示意图，实际内容会根据你的服务器数据变化。
 
-| 全屏监控 | 排行与报表 |
-| --- | --- |
-| ![Labflow monitor](docs/images/monitor.svg) | ![Labflow report](docs/images/report.svg) |
+### 全屏监控
+
+![Labflow monitor](docs/images/monitor.svg)
+
+### 排行与报表
+
+![Labflow report](docs/images/report.svg)
 
 ## 适用前提
 
@@ -163,8 +167,8 @@ lab monitor
 lab monitor
 lab report
 lab top --limit 10
-lab history wuxi
-lab trace wuxi
+lab history zhangsan
+lab trace zhangsan
 lab export-csv --month 2026-04 --output usage-2026-04.csv
 lab check-quota
 lab check-alerts --dry-run
@@ -197,14 +201,14 @@ lab top --limit 10
 ### 想查某个用户的历史月报
 
 ```bash
-lab history gaoyichen
+lab history zhangsan
 ```
 
 ### 想排查某个用户某次突增时到底跑了什么
 
 ```bash
-lab trace wuxi
-lab trace wuxi --around 2026-04-08T17:01:35+08:00 --window-minutes 20
+lab trace zhangsan
+lab trace zhangsan --around 2026-04-08T17:01:35+08:00 --window-minutes 20
 ```
 
 `trace` 会先找到这个用户的流量高峰样本，再去时间窗口里找：
@@ -214,7 +218,7 @@ lab trace wuxi --around 2026-04-08T17:01:35+08:00 --window-minutes 20
 
 注意：它能告诉你“这个时段附近执行过什么命令”，但不能严格证明某一条命令精确消耗了多少字节。
 
-### 想导出报表给老师或管理员
+### 想导出报表或存档
 
 ```bash
 lab export-csv --month 2026-04 --output usage-2026-04.csv
@@ -249,18 +253,6 @@ lab check-alerts --dry-run
 systemctl status labflow-refresh.timer labflow-collect.timer
 journalctl -u labflow-collect.service -u labflow-refresh.service -n 50 --no-pager
 ```
-
-## 为什么“只是登录看日志”也可能出现几十 MB 甚至更多流量
-
-常见原因包括：
-
-- `SSH` 登录本身会有少量流量
-- `VSCode Remote` 会同步扩展、拉取文件列表、更新索引
-- `Jupyter`、远程预览、Web IDE 会把文件内容和页面资源通过网络传输
-- 你以为在“看本地数据”，但数据其实来自网络挂载或远端源
-- 某个脚本、下载器、包管理器在后台悄悄拉了数据
-
-所以“我只是看了一眼日志 / 看了一眼数据集”不一定等于“没有外网流量”。如果某一分钟突然出现大额 `RX`，更像是发生了真实下载，而不是单纯的终端文本回显。
 
 ## 如果你还想知道“突增时跑了什么命令”
 

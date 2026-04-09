@@ -53,14 +53,14 @@ lab top --month 2026-04 --limit 10
 看某个用户的历史：
 
 ```bash
-lab history wuxi
+lab history zhangsan
 ```
 
 排查某个用户流量高峰附近跑过什么命令：
 
 ```bash
-lab trace wuxi
-lab trace wuxi --around 2026-04-08T17:01:35+08:00 --window-minutes 20
+lab trace zhangsan
+lab trace zhangsan --around 2026-04-08T17:01:35+08:00 --window-minutes 20
 ```
 
 导出某个月 CSV：
@@ -131,7 +131,7 @@ lab trace <用户名>
 lab trace <用户名> --around 2026-04-08T17:01:35+08:00 --window-minutes 20
 ```
 
-### 想把排行榜发给老师或做存档？
+### 想把排行榜导出或做存档？
 
 ```bash
 lab export-csv --month 2026-04 --output usage-2026-04.csv
@@ -193,7 +193,7 @@ lab history <用户名>
 lab report --month 2026-04
 ```
 
-最后结合采集日志看时间段：
+最后结合采集记录看时间段：
 
 ```bash
 journalctl -u labflow-collect.service -n 100 --no-pager

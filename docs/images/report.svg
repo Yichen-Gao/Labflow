@@ -23,10 +23,10 @@
   <text x="120" y="234" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="24">Quota usage: 0.29% of 90.00 GiB</text>
 
   <rect x="116" y="276" width="1048" height="54" rx="10" fill="#134e4a" />
-  <text x="138" y="310" fill="#ccfbf1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="23">uid=952  display=wuxi        total=267.24 MiB  rx=250.16 MiB  tx=17.08 MiB</text>
+  <text x="138" y="310" fill="#ccfbf1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="23">uid=952  display=zhangsan    total=267.24 MiB  rx=250.16 MiB  tx=17.08 MiB</text>
   <text x="138" y="362" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="23">uid=0    display=root        total=131.32 KiB  rx=5.89 KiB    tx=125.43 KiB</text>
-  <text x="138" y="406" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="23">uid=975  display=huangyijie  total=80 B        rx=0 B          tx=80 B</text>
-  <text x="138" y="458" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">Use `lab report` for the full ranking, `lab history <user>` for monthly history.</text>
+  <text x="138" y="406" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="23">uid=975  display=lisi        total=80 B        rx=0 B          tx=80 B</text>
+  <text x="138" y="458" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">Use `lab report` for full ranking and `lab history <user>` for history.</text>
 
   <rect x="116" y="506" width="1048" height="86" rx="14" fill="#0b1220" stroke="#1e293b" />
   <text x="140" y="544" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="22">Works well for shared lab servers with monthly traffic quotas.</text>

@@ -152,7 +152,7 @@ sudo nft list table inet labflow
 lab monitor
 ```
 
-如果管理员还想在右侧看到“其他用户最近执行过什么命令”，建议直接用：
+如果你还想在右侧看到“其他用户最近执行过什么命令”，建议直接用：
 
 ```bash
 sudo lab monitor
@@ -228,13 +228,3 @@ sudo ./contrib/install-system-wide-lab.sh
 - 目录 owner 和真实运行任务的 UID 不一致
 - 多个人共用一个系统账号
 - 那些连接并不是由本机用户主动发起的外网连接
-
-### 为什么“看一下日志 / 看一下数据集”也会有流量？
-
-因为这类动作背后可能触发：
-
-- 远程文件预览
-- `VSCode Remote` 同步
-- `Jupyter` 页面资源加载
-- 网络挂载目录读取
-- 后台下载或索引更新
